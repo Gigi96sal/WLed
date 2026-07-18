@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FrameRGB Editor</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">WLED / FRAME RGB</p>
+        <h1>FrameRGB Editor</h1>
+        <p class="subtitle">Place, tune, and export a 110-LED frame map.</p>
+      </div>
+      <div class="top-actions">
+        <label class="button button-primary file-button">
+          <span>Open image</span>
+          <input id="imageInput" type="file" accept="image/*">
+        </label>
+        <button id="exportButton" class="button button-accent" type="button">Export .h</button>
+      </div>
+    </header>
+
+    <section class="workspace">
+      <aside class="control-panel panel">
+        <section class="control-section">
+          <div class="section-heading">
+            <span class="section-index">01</span>
+            <div><h2>Frame shape</h2><p>Choose the source aspect and LED geometry.</p></div>
+          </div>
+          <div class="segmented" role="group" aria-label="Frame aspect">
+            <button class="segment is-active" data-aspect="22x33" type="button">2 : 3 <small>22 × 33</small></button>
+            <button class="segment" data-aspect="33x22" type="button">3 : 2 <small>33 × 22</small></button>
+          </div>
+          <div class="metric-row"><span>Physical LEDs</span><strong>110</strong></div>
+        </section>
+
+        <section class="control-section">
+          <div class="section-heading">
+            <span class="section-index">02</span>
+            <div><h2>Image view</h2><p>Zoom in for precise marker placement.</p></div>
+          </div>
+          <label class="range-label" for="zoomRange"><span>Zoom</span><output id="zoomValue">100%</output></label>
+          <input id="zoomRange" type="range" min="100" max="300" value="100" step="5">
+          <div class="range-scale"><span>Fit</span><span>200%</span><span>300%</span></div>
+          <button id="resetZoomButton" class="button button-secondary compact-button" type="button">Reset zoom</button>
+        </section>
+
+        <section class="control-section">
+          <div class="section-heading">
+            <span class="section-index">03</span>
+            <div><h2>Strip direction</h2><p>Pick two adjacent LEDs to define element 0 and the direction.</p></div>
+          </div>
+          <div class="direction-status" id="directionStatus">Choose element 0, then element 1.</div>
+          <div class="direction-buttons">
+            <button id="chooseFirstButton" class="button button-secondary" type="button">Choose element 0</button>
+            <button id="chooseSecondButton" class="button button-secondary" type="button" disabled>Choose element 1</button>
+          </div>
+          <div class="sequence-preview" id="sequencePreview"></div>
+        </section>
+
+        <section class="control-section">
+          <div class="section-heading">
+            <span class="section-index">04</span>
+            <div><h2>Color lift</h2><p>Adjust marker saturation without changing the image.</p></div>
+          </div>
+          <label class="range-label" for="saturationRange"><span>Saturation</span><output id="saturationValue">100%</output></label>
+          <input id="saturationRange" type="range" min="0" max="200" value="100" step="1">
+          <div class="range-scale"><span>Muted</span><span>Original</span><span>Vivid</span></div>
+          <label class="check-row"><input id="ledCorrection" type="checkbox" checked><span>LED color correction</span></label>
+        </section>
+
+        <section class="control-section">
+          <div class="section-heading">
+            <span class="section-index">05</span>
+            <div><h2>Crop image</h2><p>Keep a fixed ratio while changing the crop size.</p></div>
+          </div>
+          <div class="segmented crop-aspect" role="group" aria-label="Crop aspect">
+            <button class="segment is-active" data-crop-aspect="2:3" type="button">2 : 3</button>
+            <button class="segment" data-crop-aspect="3:2" type="button">3 : 2</button>
+          </div>
+          <label class="range-label" for="cropSizeRange"><span>Crop size</span><output id="cropSizeValue">80%</output></label>
+          <input id="cropSizeRange" type="range" min="20" max="100" value="80" step="1">
+          <div class="range-scale"><span>Small</span><span id="cropDimensions">-</span><span>Full</span></div>
+          <button id="cropButton" class="button button-secondary full-button" type="button">Crop, save &amp; open image</button>
+        </section>
+
+        <section class="control-section file-info">
+          <div class="section-heading">
+            <span class="section-index">06</span>
+            <div><h2>Export</h2><p>The generated header uses the edited marker colors and order.</p></div>
+          </div>
+          <label class="field-label" for="symbolInput">C++ array symbol</label>
+          <input id="symbolInput" class="text-input" value="frameRgbData" spellcheck="false">
+          <label class="check-row"><input id="includeMetadata" type="checkbox" checked><span>Include frame metadata</span></label>
+        </section>
+      </aside>
+
+      <section class="canvas-panel panel">
+        <div class="canvas-toolbar">
+          <div><span class="live-dot"></span><span id="imageStatus">No image loaded</span></div>
+          <div class="legend"><span><i class="legend-dot marker-dot"></i>LED marker</span><span><i class="legend-dot selected-dot"></i>direction pick</span></div>
+        </div>
+        <div class="canvas-stage" id="canvasStage">
+          <canvas id="editorCanvas" width="900" height="600"></canvas>
+          <div class="empty-state" id="emptyState"><div class="empty-icon">+</div><h2>Drop an image here</h2><p>or use Open image to start mapping the frame</p></div>
+          <div class="tooltip" id="markerTooltip" hidden></div>
+        </div>
+        <div class="canvas-footer"><span id="selectionHint">Load an image, then drag any marker to refine its sample point.</span><span id="markerCount">0 / 110 placed</span></div>
+      </section>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

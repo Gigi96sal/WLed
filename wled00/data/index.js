@@ -27,11 +27,10 @@ var lastinfo = {};
 var isM = false, mw = 0, mh=0;
 var bsOpts = null; // blending style options snapshot, used for dynamic filtering based on matrix mode (iOS compatibility)
 var ws, wsRpt=0;
-var _selFxInterval = null; // interval ID for selected effect position update
 var cfg = {
 	theme:{base:"dark", bg:{url:"", rnd: false, rndGrayscale: false, rndBlur: false}, alpha:{bg:0.6,tab:0.8}, color:{bg:""}},
 	comp :{colors:{picker: true, rgb: false, quick: true, hex: false},
-		  labels:true, pcmbot:false, pid:true, seglen:false, segpwr:false, segexp:false,
+		  labels:true, pcmbot:false, fxcols:3, pid:true, seglen:false, segpwr:false, segexp:false,
 		  css:true, hdays:false, fxdef:true, on:0, off:0, idsort: false}
 };
 // [year, month (0 -> January, 11 -> December), day, duration in days, image url]
@@ -108,6 +107,11 @@ function applyCfg()
 	sCol('--bmt', l ? "0px":"5px");
 	sCol('--t-b', cfg.theme.alpha.tab);
 	sCol('--sgp', !cfg.comp.segpwr ? "block":"none"); // show/hide segment power
+	var fxcols = parseInt(cfg.comp.fxcols);
+	if (isNaN(fxcols)) fxcols = 3;
+	fxcols = Math.max(1, Math.min(5, fxcols));
+	cfg.comp.fxcols = fxcols;
+	sCol('--fx-cols', fxcols);
 	size();
 	localStorage.setItem('wledUiCfg', JSON.stringify(cfg));
 	if (lastinfo.leds) updateUI(); // update component visibility
@@ -1367,7 +1371,6 @@ function updateSelectedFx()
 	var selElement = parent.querySelector('.selected');
 	if (selElement) {
 		selElement.classList.remove('selected');
-		selElement.style.bottom = null; // remove element style added in slider handling
 	}
 
 	var selectedEffect = parent.querySelector(`.lstI[data-id="${selectedFx}"]`);
@@ -1665,18 +1668,6 @@ function setEffectParameters(idx)
 		});
 	} else gId('fxopt').classList.add('fade');
 
-	// set the bottom position of selected effect (sticky) as the top of sliders div
-	function setSelectedEffectPosition() {
-		if (simplifiedUI) return;
-		let top = parseInt(getComputedStyle(gId("sliders")).height);
-		top += 5;
-		let sel = d.querySelector('#fxlist .selected');
-		if (sel) sel.style.bottom = top + "px"; // we will need to remove this when unselected (in setFX())
-	}
-
-	setSelectedEffectPosition();
-	if (_selFxInterval) clearInterval(_selFxInterval);
-	_selFxInterval = setInterval(setSelectedEffectPosition,750);
 	// set html color items on/off
 	var cslLabel = '';
 	var sep = '';
@@ -3622,3 +3613,4 @@ _C.addEventListener('touchstart', lock, false);
 _C.addEventListener('mouseout', move, false);
 _C.addEventListener('mouseup', move, false);
 _C.addEventListener('touchend', move, false);
+  

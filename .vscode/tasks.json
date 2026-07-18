@@ -1,5 +1,19 @@
 {
   "version": "2.0.0",
+  "inputs": [
+    {
+      "id": "uploadPort",
+      "type": "promptString",
+      "description": "Porta seriale ESP32, ad esempio COM3",
+      "default": "COM3"
+    },
+    {
+      "id": "monitorPort",
+      "type": "promptString",
+      "description": "Porta seriale da monitorare, ad esempio COM3",
+      "default": "COM3"
+    }
+  ],
   "tasks": [
     {
       "label": "Build: HTML and binary",
@@ -16,6 +30,10 @@
       "type": "PlatformIO",
       "label": "Build: binary only",
       "task": "Build",
+      "args": [
+        "-e",
+        "esp32dev"
+      ],
       "group": {
         "kind": "build",
         "isDefault": true
@@ -25,6 +43,67 @@
       ],
       "presentation": {
         "panel": "shared"
+      }
+    },
+    {
+      "label": "Build: ESP32 firmware",
+      "type": "shell",
+      "command": "${env:USERPROFILE}\\.platformio\\penv\\Scripts\\platformio.exe",
+      "args": [
+        "run",
+        "-e",
+        "esp32dev"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      },
+      "problemMatcher": [
+        "$platformio"
+      ],
+      "presentation": {
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "Build and upload: ESP32",
+      "type": "shell",
+      "command": "${env:USERPROFILE}\\.platformio\\penv\\Scripts\\platformio.exe",
+      "args": [
+        "run",
+        "-e",
+        "esp32dev",
+        "-t",
+        "upload",
+        "--upload-port",
+        "${input:uploadPort}"
+      ],
+      "dependsOn": "Build: HTML only",
+      "dependsOrder": "sequence",
+      "problemMatcher": [
+        "$platformio"
+      ],
+      "presentation": {
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "Monitor: ESP32 seriale",
+      "type": "shell",
+      "command": "${env:USERPROFILE}\\.platformio\\penv\\Scripts\\platformio.exe",
+      "args": [
+        "device",
+        "monitor",
+        "--port",
+        "${input:monitorPort}",
+        "--baud",
+        "115200"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "panel": "dedicated",
+        "reveal": "always",
+        "close": false
       }
     },
     {

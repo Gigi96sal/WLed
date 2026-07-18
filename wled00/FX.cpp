@@ -16,6 +16,7 @@
 #include "fcn_declare.h"
 #include "colors.h"
 #include "prng.h"
+#include "frame_rgb_data.h"
 
 #define FX_FALLBACK_STATIC { mode_static(); return; }
 
@@ -4651,6 +4652,27 @@ void mode_image(void) {
   // }
 }
 static const char _data_FX_MODE_IMAGE[] PROGMEM = "Image@!,Blur,;;;12;sx=128,ix=0";
+
+/*
+  FrameRGB effect
+  Displays the build-time generated frame on a 1D segment.
+*/
+void mode_frame_rgb(void) {
+#if FRAME_RGB_AVAILABLE
+  const uint16_t framePixelCount = FRAME_RGB_PIXEL_COUNT;
+  for (uint16_t i = 0; i < SEGLEN; i++) {
+    const uint16_t frameIndex = i % framePixelCount;
+    const size_t offset = static_cast<size_t>(frameIndex) * 3;
+    const uint8_t red = pgm_read_byte(&frameRgbData[offset]);
+    const uint8_t green = pgm_read_byte(&frameRgbData[offset + 1]);
+    const uint8_t blue = pgm_read_byte(&frameRgbData[offset + 2]);
+    SEGMENT.setPixelColor(i, RGBW32(red, green, blue, 0));
+  }
+#else
+  SEGMENT.fill(0);
+#endif
+}
+static const char _data_FX_MODE_FRAME_RGB[] PROGMEM = "FrameRGB@;;;";
 
 /*
   Blends random colors across palette
@@ -11038,6 +11060,7 @@ void WS2812FX::setupEffectData() {
   #ifdef WLED_ENABLE_GIF
   addEffect(FX_MODE_IMAGE, &mode_image, _data_FX_MODE_IMAGE);
   #endif
+  addEffect(FX_MODE_FRAME_RGB, &mode_frame_rgb, _data_FX_MODE_FRAME_RGB);
   addEffect(FX_MODE_TRICOLOR_CHASE, &mode_tricolor_chase, _data_FX_MODE_TRICOLOR_CHASE);
   addEffect(FX_MODE_TRICOLOR_WIPE, &mode_tricolor_wipe, _data_FX_MODE_TRICOLOR_WIPE);
   addEffect(FX_MODE_TRICOLOR_FADE, &mode_tricolor_fade, _data_FX_MODE_TRICOLOR_FADE);

@@ -399,6 +399,10 @@ button {
 	margin: 0 auto;
 }
 
+#fx {
+	max-width: min(100%, 900px);
+}
+
 #putil {
 	padding: 5px 0 0;
 }
@@ -1312,6 +1316,13 @@ TD .checkmark, TD .radiomark {
 	line-height: 24px;
 }
 
+#fxlist {
+	container-type: inline-size;
+	display: grid;
+	grid-template-columns: repeat(var(--fx-cols, 3), minmax(0, 1fr));
+	gap: 8px;
+}
+
 /* list item */
 .lstI {
 	align-items: center;
@@ -1382,7 +1393,44 @@ TD .checkmark, TD .radiomark {
 }
 
 #fxlist .lstI.selected {
-	top: calc(var(--sti) + 42px);
+	position: relative;
+	top: auto;
+	bottom: auto;
+	z-index: 2;
+	transform: scale(1.04);
+	border-color: #39ff14;
+	box-shadow: 0 0 8px rgba(57, 255, 20, .75);
+	transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+}
+
+#fxlist .lstI {
+	position: relative;
+	width: auto;
+	margin: 0;
+}
+
+#fxlist .radiomark {
+	display: none;
+}
+
+#fxlist .lstI.sticky {
+	position: relative;
+	top: 0;
+	bottom: auto;
+}
+
+#fxlist .lstIcontent {
+	padding: 9px 4px 7px;
+	text-align: center;
+}
+
+#fxlist .lstIname {
+	display: block;
+	font-size: clamp(11px, 4cqw, 19px);
+	line-height: 1.15;
+	white-space: normal;
+	overflow: hidden;
+	overflow-wrap: anywhere;
 }
 #pallist .lstI.selected {
 	top: calc(var(--stp) + 42px);
@@ -1618,7 +1666,7 @@ dialog {
 
 /* small screen & tablet "PC mode" support */
 @media all and (min-width: 1024px) and (max-width: 1249px) {
-	#segutil, #segutil2, #segcont, #putil, #pcont, #pql, #fx, #palw, #psFind, #sliders {
+	#segutil, #segutil2, #segcont, #putil, #pcont, #pql, #palw, #psFind, #sliders {
 		width: 100%;
 		max-width: 280px;
 		font-size: 18px;
