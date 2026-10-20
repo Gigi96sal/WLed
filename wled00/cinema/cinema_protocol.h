@@ -14,7 +14,7 @@ namespace protocol {
 
 constexpr uint8_t PROTOCOL_MAGIC_0 = 'C';
 constexpr uint8_t PROTOCOL_MAGIC_1 = 'M';
-constexpr uint8_t PROTOCOL_VERSION_MAJOR = 1;
+constexpr uint8_t PROTOCOL_VERSION_MAJOR = 2;
 constexpr uint8_t PROTOCOL_VERSION_MINOR = 0;
 
 constexpr size_t PACKET_HEADER_SIZE = 20;
@@ -40,7 +40,8 @@ enum class MessageType : uint8_t {
   LogEvent = 15,
   Acknowledge = 16,
   NegativeAcknowledge = 17,
-  Error = 18
+  Error = 18,
+  StreamConfigure = 19
 };
 
 enum class NodeRole : uint8_t {
@@ -91,6 +92,8 @@ struct FrameRgbHeader {
   uint16_t slotCount = 0;
   ColorFormat colorFormat = ColorFormat::Rgb24;
   uint8_t flags = 0;
+  uint32_t controllerBootId = 0;
+  uint32_t pollSequence = 0;
 };
 
 struct FrameRgbView {
@@ -98,7 +101,7 @@ struct FrameRgbView {
   const uint8_t* colors = nullptr;
 };
 
-constexpr size_t FRAME_RGB_HEADER_SIZE = 22;
+constexpr size_t FRAME_RGB_HEADER_SIZE = 30;
 constexpr size_t MAX_FRAME_RGB_SLOTS = (MAX_PAYLOAD_SIZE - FRAME_RGB_HEADER_SIZE) / 3;
 
 static_assert(MAX_PAYLOAD_SIZE <= UINT16_MAX, "Cinema protocol payload length must fit the wire format.");
@@ -176,7 +179,7 @@ inline PacketStatus encodePacket(const PacketHeader& header, const uint8_t* payl
   return PacketStatus::Ok;
 }
 
-// Validates an already COBS-decoded packet before making its payload available to consumers.
+// Validates a complete raw packet before making its payload available to consumers.
 inline PacketStatus decodePacket(const uint8_t* decodedBuffer, size_t decodedSize, PacketView* packet) {
   if (!decodedBuffer || !packet) return PacketStatus::InvalidArgument;
   if (decodedSize < PACKET_HEADER_SIZE + PACKET_CRC_SIZE) return PacketStatus::InvalidLength;
@@ -217,6 +220,8 @@ inline PacketStatus encodeFrameRgbPayload(const FrameRgbHeader& header, const ui
   writeU16Le(payload + 18, header.slotCount);
   payload[20] = static_cast<uint8_t>(header.colorFormat);
   payload[21] = header.flags;
+  writeU32Le(payload + 22, header.controllerBootId);
+  writeU32Le(payload + 26, header.pollSequence);
   if (colorBytes > 0) memcpy(payload + FRAME_RGB_HEADER_SIZE, colors, colorBytes);
   *payloadSize = FRAME_RGB_HEADER_SIZE + colorBytes;
   return PacketStatus::Ok;
@@ -238,6 +243,8 @@ inline PacketStatus decodeFrameRgbPayload(const uint8_t* payload, size_t payload
   frame->header.slotCount = slotCount;
   frame->header.colorFormat = colorFormat;
   frame->header.flags = payload[21];
+  frame->header.controllerBootId = readU32Le(payload + 22);
+  frame->header.pollSequence = readU32Le(payload + 26);
   frame->colors = payload + FRAME_RGB_HEADER_SIZE;
   return PacketStatus::Ok;
 }

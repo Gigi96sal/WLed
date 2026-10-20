@@ -42,6 +42,9 @@ int main() {
   assert(packet.header.requestId == commandHeader.requestId);
   assert(packet.payloadSize == commandPayload.size());
   assert(memcmp(packet.payload, commandPayload.data(), commandPayload.size()) == 0);
+  encodedPacket[2] = 1;
+  assert(cinema::protocol::decodePacket(encodedPacket.data(), encodedPacketSize, &packet) == PacketStatus::IncompatibleVersion);
+  encodedPacket[2] = cinema::protocol::PROTOCOL_VERSION_MAJOR;
 
   std::array<uint8_t, cinema::protocol::MAX_PACKET_SIZE> corruptedPacket = encodedPacket;
   corruptedPacket[cinema::protocol::PACKET_HEADER_SIZE] ^= 0x01;
@@ -77,6 +80,8 @@ int main() {
   frameHeader.slotCount = 3;
   frameHeader.colorFormat = ColorFormat::Rgb24;
   frameHeader.flags = 0x01;
+  frameHeader.controllerBootId = 0x12345678;
+  frameHeader.pollSequence = UINT32_MAX;
 
   std::array<uint8_t, cinema::protocol::MAX_PAYLOAD_SIZE> framePayload{};
   size_t framePayloadSize = 0;
@@ -88,6 +93,8 @@ int main() {
   assert(frame.header.frameId == frameHeader.frameId);
   assert(frame.header.captureTimeUs == frameHeader.captureTimeUs);
   assert(frame.header.slotCount == frameHeader.slotCount);
+  assert(frame.header.controllerBootId == frameHeader.controllerBootId);
+  assert(frame.header.pollSequence == frameHeader.pollSequence);
   assert(memcmp(frame.colors, colors.data(), colors.size()) == 0);
   return 0;
 }

@@ -7,22 +7,40 @@ validation of the wired SPI link between:
 - one AI Thinker ESP32-CAM with OV2640 and 4 MB PSRAM as the left slave;
 - one AI Thinker ESP32-CAM with OV2640 and 4 MB PSRAM as the right slave.
 
-## Current milestone
+## RGB streaming
 
-The current firmware initializes both cameras in RGB565 QVGA mode and provides a
-CRC-protected SPI heartbeat from each camera to WLED. WLED validates the camera
-role, boot ID, packet sequence, slot structure, and CRC before reporting a node as
-connected.
+Both cameras capture RGB565 QVGA images and send CRC-protected RGB24 perimeter
+samples to the WLED Cinema effect. WLED sends its current perimeter counts and
+configuration generation on every poll; no separate camera configuration is needed.
+Capture runs independently of SPI, with bounded latest-frame queues and a target
+of at most 30 frames per second. Raw RGB uses one sensor framebuffer, as recommended
+by the [Espressif driver](https://github.com/espressif/esp32-camera#important-to-remember).
+This avoids continuous multi-buffer capture; actual throughput depends on sensor
+exposure, single-buffer acquisition time and bus speed, and must be measured on hardware.
 
-The camera-to-LED image pipeline is not complete yet. The camera firmware does not
-extract perimeter colors or send `FrameRgb` packets. During this milestone:
+**Flash WLED and both cameras together.** Protocol major version 2 adds controller
+session and poll references to RGB frames. Version 1 heartbeat firmware is incompatible.
+The SPI wiring and persisted WLED configuration schema 4 are unchanged.
 
-- `SPI: Ready`, both cameras `Connected`, and increasing packet sequences indicate
-  a successful test;
-- the frame counters remain `0`;
-- the WLED Cinema effect remains black because no RGB frames are published yet.
+Each camera must see its own half of the screen, upright and unmirrored: the left
+image fills the left half, and the right image fills the right half. This initial
+sampler assumes a rectangular screen filling each image; perspective calibration,
+automatic screen detection and rotation/mirror controls are not implemented yet.
+Align the cameras physically before assessing the colors. Each LED averages a
+3x3 pixel patch, centered 5% inward from the relevant outer screen edge. Top and
+bottom samples account for each half's position in the full screen. On odd edges,
+the center LED belongs to the right camera. The internal order is top left-to-right,
+right top-to-bottom, bottom right-to-left, then left bottom-to-top; WLED applies
+the configured strip origin and direction afterward.
 
-Use another WLED effect to test the LED strip itself.
+Frames carry the actual sensor capture timestamp and reference a preceding
+configuration poll. The master accepts only references from its current session
+and the last 150 ms. LED freshness uses that poll's time as a conservative capture
+bound, so a queued frame cannot become fresh again after an interruption. Missing
+frames turn only that camera's portion black. Heartbeats maintain link status
+while the sensor is not producing valid RGB; check increasing frame counters too.
+
+Use another WLED effect first to test the LED strip itself.
 
 ## Required hardware
 
@@ -292,12 +310,12 @@ show:
 
 ```text
 SPI: Ready
-Left camera: Connected, sequence <increasing value>, frames 0
-Right camera: Connected, sequence <increasing value>, frames 0
+Left camera: Connected, sequence <increasing value>, frames <increasing value>
+Right camera: Connected, sequence <increasing value>, frames <increasing value>
 ```
 
-The sequence values must increase on each refresh. `frames 0` is correct for the
-current heartbeat milestone.
+Both sequence and frame counters must increase on each refresh. A connected
+camera with a frozen or zero frame counter has a live SPI link but no usable RGB.
 
 The same data is available as JSON. Replace the address with the WLED IP:
 
@@ -311,8 +329,8 @@ sequence values.
 
 A healthy result has `transport` equal to `1`, both `connected` fields set to
 `true`, stable nonzero `boot` values, and increasing `sequence` values. The JSON
-endpoint does not currently expose a CRC error counter; malformed packets are
-rejected before they can update the connection sequence.
+endpoint exposes aggregate SPI slot and transfer error counters; malformed packets
+are rejected before they can update the connection sequence.
 
 ## 10. Run controlled fault tests
 
@@ -326,6 +344,15 @@ Run these tests at 1 MHz before increasing the bus speed:
 	increasing its sequence without rebooting the master.
 5. Leave both cameras running for at least ten minutes. Neither sequence should
 	stall and neither link should repeatedly disconnect.
+6. Display solid red, green, blue, white, and black screen patterns. The Cinema
+	LEDs should follow each color; black must settle fully dark. Allow the sensor's
+	automatic exposure/white balance to settle. These tests verify channel order,
+	not calibrated color accuracy.
+7. Display different colors on the two screen halves, then swap them. Verify that
+	the corresponding LED portions follow each half. Use a moving bright patch
+	around the outer screen edges to verify origin, direction and camera alignment.
+8. Hold either camera in reset while displaying a bright pattern. Its LED portion
+	must turn fully black after the freshness deadline; the other half must continue.
 
 After a stable 1 MHz test, change the Cinema clock to 2 MHz and repeat the checks.
 Then test the intended 4 MHz profile. Return to the last stable frequency if the
@@ -358,11 +385,9 @@ that either camera is responding; check both camera connection states as well.
 | Only one camera disconnected | Check that camera's CS wire and power, then confirm its left/right firmware role |
 | Connections swap or one role is rejected | Confirm CS Left reaches the board flashed as `camera_left` and CS Right reaches `camera_right` |
 | Links connect only at low speed | Improve ground returns and cable topology, shorten stubs, and adjust series damping before raising the clock |
-| Cinema effect is black with both links connected | Expected until camera RGB extraction and `FrameRgb` publishing are implemented |
-
-Do not diagnose the SPI bus using LED output during this milestone. The authoritative
-checks are `SPI: Ready`, both connection flags, increasing sequences, and successful
-single-camera reset/reconnect tests.
+| Cinema effect is black with both links connected | Check increasing frame counters, nonzero configuration generation/counts, exact segment length, effect selection, and that all three devices run protocol v2 |
+| Frames increase but colors follow the wrong screen edge | Verify camera roles, upright/unmirrored half-screen framing, strip zero corner and direction |
+| Occasional black portions despite connected links | Check frame counters and SPI errors, sensor exposure/frame rate, power stability, and bus frequency; reduce LED/network workload on WLED |
 
 ## Acceptance checklist
 
@@ -375,13 +400,14 @@ single-camera reset/reconnect tests.
 - [ ] Camera MISO outputs are separate: left GPIO12 to master GPIO19, right GPIO12 to master GPIO21.
 - [ ] WLED reports `SPI: Ready` at 1 MHz.
 - [ ] Both cameras report connected with increasing sequences and stable boot IDs.
+- [ ] Both frame counters increase and RGB test patterns reach the correct LED portions.
 - [ ] Holding either camera in reset affects only that camera's status.
 - [ ] Both links remain stable for at least ten minutes.
 - [ ] The same checks pass at the selected operating frequency.
 
 Passing this checklist validates firmware loading, camera initialization, SPI
-wiring, role assignment, packet integrity, and WLED link supervision. It does not
-yet validate screen-color capture or LED color rendering.
+wiring, role assignment, packet integrity, link supervision and basic RGB rendering.
+It does not establish calibrated color accuracy or perspective alignment.
 
 ## Host regression checks
 
@@ -390,7 +416,11 @@ GCC, Clang, or MSVC (including installed Visual Studio Build Tools on Windows).
 It compiles the real controller, SPI master and protocol code against small host
 stubs. It checks uptime-based rendering, timeout and black-frame convergence,
 camera reboot isolation, configuration updates arriving during SPI initialization,
-independent MISO selection, and cleanup after GPIO allocation failures.
+independent MISO selection, and cleanup after GPIO allocation failures. RGB checks
+cover sensor byte order, uneven perimeter counts, both edge directions, truncated
+images, command history, and full-duplex exchanges between the real SPI slave and
+controller code. They also exercise lost commands, stale queued frames, controller
+and camera reboots, and configuration changes.
 
 The hardware acceptance checklist above remains required for electrical timing,
 camera initialization, and reset/reconnect behavior.

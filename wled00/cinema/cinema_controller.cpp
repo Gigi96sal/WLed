@@ -26,7 +26,7 @@ bool CinemaConfig::isValidForSegment(uint16_t segmentLength) const {
 CinemaController::CinemaController() {
 #ifdef ARDUINO_ARCH_ESP32
   _configQueue = xQueueCreateStatic(1, sizeof(ConfigUpdate), _configQueueStorage, &_configQueueControl);
-    const ConfigUpdate initial;
+  const ConfigUpdate initial;
   xQueueOverwrite(_configQueue, &initial);
 #endif
 }
@@ -74,12 +74,17 @@ void CinemaController::service(uint32_t nowMillis) {
     clearFrames();
     _appliedConfigRevision = update.revision;
     _hasAppliedConfig = true;
-    if (_config.enabled) _spiMaster.begin(_config.spi);
+    if (_config.enabled) _spiMaster.begin(_config.spi, _config.streamConfig());
   }
 
   protocol::PacketView packet;
   protocol::NodeRole expectedSource;
-  if (_spiMaster.poll(&packet, &expectedSource, nowMillis)) processPacket(packet, expectedSource, nowMillis);
+  if (_spiMaster.poll(&packet, &expectedSource, nowMillis) && processPacket(packet, expectedSource, nowMillis, _spiMaster.frameIsFresh())
+      && packet.header.type == protocol::MessageType::FrameRgb) {
+    // Use the request's time as a conservative capture bound, rather than refreshing stale RGB on arrival.
+    CameraSide side;
+    if (packetSourceToSide(expectedSource, &side)) frameTimeForSide(side) = _spiMaster.frameRequestMillis();
+  }
 }
 
 const CameraRuntimeStatus& CinemaController::cameraStatus(CameraSide side) const {
@@ -151,26 +156,11 @@ bool CinemaController::render(Segment& segment) {
 uint16_t CinemaController::expectedSlotCount(CameraSide side) const {
   if (!_config.isStructurallyValid()) return 0;
 
-  uint16_t count = 0;
-  for (uint16_t canonicalSlot = 0; canonicalSlot < _config.totalLeds(); canonicalSlot++) {
-    if (ownerForCanonicalSlot(canonicalSlot) == side) count++;
-  }
-  return count;
+  return stream::slotCount(_config.streamConfig(), side == CameraSide::Left ? protocol::NodeRole::CameraLeft : protocol::NodeRole::CameraRight);
 }
 
 CameraSide CinemaController::ownerForCanonicalSlot(uint16_t canonicalSlot) const {
-  const uint16_t topEnd = _config.topLeds;
-  const uint16_t rightEnd = topEnd + _config.rightLeds;
-  const uint16_t bottomEnd = rightEnd + _config.bottomLeds;
-
-  if (canonicalSlot < topEnd) return canonicalSlot < (_config.topLeds / 2) ? CameraSide::Left : CameraSide::Right;
-  if (canonicalSlot < rightEnd) return CameraSide::Right;
-  if (canonicalSlot < bottomEnd) {
-    const uint16_t bottomSlot = canonicalSlot - rightEnd;
-    const uint16_t rightShare = _config.bottomLeds - (_config.bottomLeds / 2);
-    return bottomSlot < rightShare ? CameraSide::Right : CameraSide::Left;
-  }
-  return CameraSide::Left;
+  return stream::owner(_config.streamConfig(), canonicalSlot) == protocol::NodeRole::CameraLeft ? CameraSide::Left : CameraSide::Right;
 }
 
 uint16_t CinemaController::physicalIndexForCanonicalSlot(uint16_t canonicalSlot) const {
@@ -212,7 +202,7 @@ CameraRuntimeStatus& CinemaController::statusForSide(CameraSide side) {
   return side == CameraSide::Left ? _leftStatus : _rightStatus;
 }
 
-bool CinemaController::processPacket(const protocol::PacketView& packet, protocol::NodeRole expectedSource, uint32_t nowMillis) {
+bool CinemaController::processPacket(const protocol::PacketView& packet, protocol::NodeRole expectedSource, uint32_t nowMillis, bool frameIsFresh) {
   if (packet.header.target != protocol::NodeRole::Controller || packet.header.source != expectedSource) return false;
 
   CameraSide side;
@@ -229,7 +219,7 @@ bool CinemaController::processPacket(const protocol::PacketView& packet, protoco
   status.lastSequence = packet.header.sequence;
 
   if (packet.header.type == protocol::MessageType::Heartbeat) return true;
-  if (packet.header.type == protocol::MessageType::FrameRgb) return acceptFrame(packet, nowMillis);
+  if (packet.header.type == protocol::MessageType::FrameRgb) return frameIsFresh && acceptFrame(packet, nowMillis);
   return false;
 }
 

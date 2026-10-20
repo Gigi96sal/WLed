@@ -40,9 +40,11 @@ bool CameraService::begin() {
   config.pixel_format = PIXFORMAT_RGB565;
   config.frame_size = FRAMESIZE_QVGA;
   config.jpeg_quality = 12;
-  config.fb_count = 2;
+  // Raw RGB must not use the driver's continuous multi-buffer mode, which is intended for JPEG:
+  // https://github.com/espressif/esp32-camera#important-to-remember
+  config.fb_count = 1;
   config.fb_location = CAMERA_FB_IN_PSRAM;
-  config.grab_mode = CAMERA_GRAB_LATEST;
+  config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
 
   const esp_err_t initResult = esp_camera_init(&config);
   _ready = initResult == ESP_OK;

@@ -21,8 +21,8 @@ class Segment;
 namespace cinema {
 namespace wled {
 
-constexpr uint16_t MAX_CINEMA_LEDS = 600;
-constexpr uint32_t CAMERA_FRAME_TIMEOUT_MS = 150;
+constexpr uint16_t MAX_CINEMA_LEDS = stream::MAX_STREAM_LEDS;
+constexpr uint32_t CAMERA_FRAME_TIMEOUT_MS = stream::FRAME_TIMEOUT_MS;
 constexpr uint32_t CAMERA_LINK_TIMEOUT_MS = 1000;
 
 enum class ZeroCorner : uint8_t {
@@ -66,6 +66,7 @@ struct CinemaConfig {
   CinemaColorConfig color;
 
   uint16_t totalLeds() const;
+  stream::Config streamConfig() const { return {generation, topLeds, rightLeds, bottomLeds, leftLeds, stream::DEFAULT_FPS}; }
   bool isStructurallyValid() const;
   bool isValidForSegment(uint16_t segmentLength) const;
 };
@@ -116,7 +117,7 @@ class CinemaController {
     uint32_t frameTimeForSide(CameraSide side) const;
     uint32_t& frameTimeForSide(CameraSide side);
     CameraRuntimeStatus& statusForSide(CameraSide side);
-    bool processPacket(const protocol::PacketView& packet, protocol::NodeRole expectedSource, uint32_t nowMillis);
+    bool processPacket(const protocol::PacketView& packet, protocol::NodeRole expectedSource, uint32_t nowMillis, bool frameIsFresh = true);
     bool packetSourceToSide(protocol::NodeRole source, CameraSide* side) const;
     void correctColor(uint16_t canonicalSlot, uint8_t* red, uint8_t* green, uint8_t* blue);
     void clearSide(CameraSide side);

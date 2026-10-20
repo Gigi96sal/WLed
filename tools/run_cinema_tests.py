@@ -36,7 +36,7 @@ def main():
     msvc = Path(compiler).stem.lower() == "cl"
     with tempfile.TemporaryDirectory(prefix="wled-cinema-tests-") as directory:
         temporary = Path(directory)
-        for header in ("wled.h", "freertos/FreeRTOS.h", "freertos/queue.h", "driver/gpio.h", "driver/spi_master.h", "esp_heap_caps.h", "esp_rom_gpio.h", "soc/spi_periph.h"):
+        for header in ("wled.h", "Arduino.h", "freertos/FreeRTOS.h", "freertos/queue.h", "driver/gpio.h", "driver/spi_master.h", "driver/spi_slave.h", "esp_heap_caps.h", "esp_rom_gpio.h", "esp_system.h", "esp_timer.h", "soc/spi_periph.h"):
             destination = temporary / header
             destination.parent.mkdir(parents=True, exist_ok=True)
             contents = '#include "cinema_test_support.h"\n'
@@ -52,6 +52,7 @@ def main():
         production = [root / "wled00/cinema/cinema_controller.cpp", root / "wled00/cinema/cinema_spi_master.cpp"]
         cases = {
             "protocol": [root / "tools/cinema_protocol_test.cpp"],
+            "stream": [root / "tools/cinema_stream_test.cpp", root / "cinema-camera/src/spi_slave_endpoint.cpp", *production],
             "controller": [root / "tools/cinema_controller_test.cpp", *production],
             "config": [root / "tools/cinema_config_test.cpp", *production],
             "unsupported": [unsupported, *production],
@@ -59,11 +60,11 @@ def main():
         for name, sources in cases.items():
             executable = temporary / (name + (".exe" if os.name == "nt" else ""))
             if msvc:
-                flags = ["/nologo", "/EHsc", "/std:c++17", "/O2", f"/I{temporary}", f"/I{root / 'tools'}", f"/Fe:{executable}"]
+                flags = ["/nologo", "/EHsc", "/std:c++17", "/O2", f"/I{temporary}", f"/I{root / 'tools'}", f"/I{root / 'cinema-camera/include'}", f"/I{root / 'wled00/cinema'}", f"/Fe:{executable}"]
                 if name != "unsupported":
                     flags += ["/DARDUINO_ARCH_ESP32", "/DCONFIG_IDF_TARGET_ESP32"]
             else:
-                flags = ["-std=c++17", "-O2", "-pthread", f"-I{temporary}", f"-I{root / 'tools'}", "-o", str(executable)]
+                flags = ["-std=c++17", "-O2", "-pthread", f"-I{temporary}", f"-I{root / 'tools'}", f"-I{root / 'cinema-camera/include'}", f"-I{root / 'wled00/cinema'}", "-o", str(executable)]
                 if name != "unsupported":
                     flags += ["-DARDUINO_ARCH_ESP32", "-DCONFIG_IDF_TARGET_ESP32"]
             subprocess.run([compiler, *flags, *map(str, sources)], cwd=temporary, env=environment, check=True)

@@ -4,6 +4,7 @@
 #include <driver/spi_slave.h>
 #include <esp_heap_caps.h>
 #include <esp_system.h>
+#include <esp_timer.h>
 
 #include "camera_pins.h"
 
@@ -38,7 +39,16 @@ bool SpiSlaveEndpoint::begin() {
   }
   _initialized = true;
 
+  _request = stream::CaptureRequest();
+  _requestQueue = xQueueCreateStatic(1, sizeof(stream::CaptureRequest), _requestQueueStorage, &_requestQueueControl);
+  _frameQueue = xQueueCreateStatic(1, sizeof(stream::Frame), _frameQueueStorage, &_frameQueueControl);
+  if (!_requestQueue || !_frameQueue) {
+    end();
+    return false;
+  }
+
   _bootId = esp_random();
+  _packetSequence = _slotSequence = 0;
   Serial.printf("Cinema SPI slave: ready, role=%u HSPI SCLK=%d MOSI=%d MISO=%d CS=%d boot=%lu\n", static_cast<unsigned>(_role), pins::SPI_SCLK, pins::SPI_MOSI, pins::SPI_MISO, pins::SPI_CS, static_cast<unsigned long>(_bootId));
   if (prepareHeartbeat()) return true;
   end();
@@ -52,6 +62,7 @@ void SpiSlaveEndpoint::end() {
   _rxBuffer = nullptr;
   _txBuffer = nullptr;
   _initialized = false;
+  _requestQueue = _frameQueue = nullptr;
 }
 
 void SpiSlaveEndpoint::run() {
@@ -63,24 +74,55 @@ void SpiSlaveEndpoint::run() {
   if (spi_slave_transmit(SPI2_HOST, &transaction, portMAX_DELAY) == ESP_OK) {
     _transactionCount++;
     processReceivedSlot(transaction.trans_len / 8);
-    prepareHeartbeat();
+    prepareNextSlot();
     reportDiagnostics(millis());
   }
   delay(1);
 }
 
 bool SpiSlaveEndpoint::prepareHeartbeat() {
+  return preparePacket(protocol::MessageType::Heartbeat, nullptr, 0);
+}
+
+// Only the SPI task touches DMA storage, and only after the previous transaction has completed.
+bool SpiSlaveEndpoint::prepareNextSlot() {
+  if (xQueueReceive(_frameQueue, &_outgoingFrame, 0) == pdPASS) {
+    const auto& frame = _outgoingFrame.header;
+    const uint64_t nowUs = esp_timer_get_time();
+    if (frame.controllerBootId == _request.controllerBootId && frame.configGeneration == _request.config.generation
+        && frame.slotCount == stream::slotCount(_request.config, _role) && nowUs >= frame.captureTimeUs
+        && nowUs - frame.captureTimeUs <= stream::FRAME_TIMEOUT_MS * 1000ULL) {
+      size_t payloadSize = 0;
+      if (protocol::encodeFrameRgbPayload(frame, _outgoingFrame.colors, static_cast<size_t>(frame.slotCount) * 3,
+          _payloadBuffer, sizeof(_payloadBuffer), &payloadSize) == protocol::PacketStatus::Ok) {
+        return preparePacket(protocol::MessageType::FrameRgb, _payloadBuffer, payloadSize);
+      }
+    }
+  }
+  return prepareHeartbeat();
+}
+
+// Queue copies isolate capture on the Arduino loop task from SPI transmission on core 0.
+bool SpiSlaveEndpoint::captureRequest(stream::CaptureRequest* request) const {
+  return request && _requestQueue && xQueuePeek(_requestQueue, request, 0) == pdPASS;
+}
+
+bool SpiSlaveEndpoint::publishFrame(const stream::Frame& frame) {
+  return _frameQueue && xQueueOverwrite(_frameQueue, &frame) == pdPASS;
+}
+
+// Encodes each response with a unique packet sequence; RGB frame IDs advance only on real captures.
+bool SpiSlaveEndpoint::preparePacket(protocol::MessageType type, const uint8_t* payload, size_t payloadSize) {
   protocol::PacketHeader header;
-  header.type = protocol::MessageType::Heartbeat;
+  header.type = type;
   header.source = _role;
   header.target = protocol::NodeRole::Controller;
   header.sequence = ++_packetSequence;
   header.bootId = _bootId;
 
-  uint8_t packet[protocol::PACKET_HEADER_SIZE + protocol::PACKET_CRC_SIZE] = {};
   size_t packetSize = 0;
-  if (protocol::encodePacket(header, nullptr, 0, packet, sizeof(packet), &packetSize) != protocol::PacketStatus::Ok) return false;
-  return spi::encodeSlot(packet, packetSize, 0, ++_slotSequence, _txBuffer, spi::SLOT_SIZE) == spi::SlotStatus::Ok;
+  if (protocol::encodePacket(header, payload, payloadSize, _packetBuffer, sizeof(_packetBuffer), &packetSize) != protocol::PacketStatus::Ok) return false;
+  return spi::encodeSlot(_packetBuffer, packetSize, 0, ++_slotSequence, _txBuffer, spi::SLOT_SIZE) == spi::SlotStatus::Ok;
 }
 
 void SpiSlaveEndpoint::processReceivedSlot(size_t receivedBytes) {
@@ -97,6 +139,9 @@ void SpiSlaveEndpoint::processReceivedSlot(size_t receivedBytes) {
   const spi::SlotStatus status = spi::decodeSlot(_rxBuffer, spi::SLOT_SIZE, &slot);
   if (status == spi::SlotStatus::Ok || status == spi::SlotStatus::Empty) _validSlotCount++;
   else _invalidSlotCount++;
+  if (status == spi::SlotStatus::Ok && _request.accept(slot.packet, _role, esp_timer_get_time())) {
+    xQueueOverwrite(_requestQueue, &_request);
+  }
   if (status != spi::SlotStatus::Ok && status != spi::SlotStatus::Empty) {
     const uint32_t nowMillis = millis();
     if (static_cast<uint32_t>(nowMillis - _lastErrorLogMillis) >= 1000) {
@@ -109,7 +154,7 @@ void SpiSlaveEndpoint::processReceivedSlot(size_t receivedBytes) {
 void SpiSlaveEndpoint::reportDiagnostics(uint32_t nowMillis) {
   if (static_cast<uint32_t>(nowMillis - _lastDiagnosticsMillis) < 1000) return;
   _lastDiagnosticsMillis = nowMillis;
-  Serial.printf("Cinema SPI slave: transactions=%lu valid-slots=%lu invalid-slots=%lu heartbeat-seq=%lu\n",
+  Serial.printf("Cinema SPI slave: transactions=%lu valid-slots=%lu invalid-slots=%lu packet-seq=%lu\n",
     static_cast<unsigned long>(_transactionCount), static_cast<unsigned long>(_validSlotCount), static_cast<unsigned long>(_invalidSlotCount), static_cast<unsigned long>(_packetSequence));
 }
 

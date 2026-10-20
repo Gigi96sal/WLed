@@ -5,6 +5,7 @@
 #include <driver/spi_master.h>
 #include <esp_heap_caps.h>
 #include <esp_rom_gpio.h>
+#include <esp_system.h>
 #include <soc/spi_periph.h>
 #endif
 
@@ -35,10 +36,11 @@ bool CinemaSpiConfig::isStructurallyValid() const {
   return true;
 }
 
-bool CinemaSpiMaster::begin(const CinemaSpiConfig& config) {
+bool CinemaSpiMaster::begin(const CinemaSpiConfig& config, const stream::Config& streamConfig) {
   end();
   _config = config;
-  if (!config.isStructurallyValid() || !config.isComplete()) {
+  _streamConfig = streamConfig;
+  if (!config.isStructurallyValid() || !config.isComplete() || !streamConfig.isValid()) {
     _status = CinemaSpiStatus::InvalidConfig;
     return false;
   }
@@ -111,6 +113,8 @@ bool CinemaSpiMaster::begin(const CinemaSpiConfig& config) {
     return false;
   }
   _rightDevice = rightDevice;
+  _controllerBootId = esp_random();
+  if (_controllerBootId == 0) _controllerBootId = 1;
   _status = CinemaSpiStatus::Ready;
   DEBUG_PRINTF("Cinema SPI master: ready, SCLK=%d MOSI=%d MISO-left=%d MISO-right=%d CS-left=%d CS-right=%d Hz=%lu\n", config.sclkPin, config.mosiPin, config.misoPin, config.rightMisoPin, config.leftCsPin, config.rightCsPin, static_cast<unsigned long>(config.frequencyHz));
   return true;
@@ -136,6 +140,10 @@ void CinemaSpiMaster::end() {
   releasePins();
   _lastPollMillis = 0;
   _slotSequence = 0;
+  _controllerBootId = 0;
+  _frameIsFresh = false;
+  for (auto& side : _requests) for (auto& request : side) request = PollRecord();
+  _nextRequest[0] = _nextRequest[1] = 0;
   _leftPolls = 0;
   _rightPolls = 0;
   _validSlots = 0;
@@ -151,14 +159,27 @@ bool CinemaSpiMaster::poll(protocol::PacketView* packet, protocol::NodeRole* exp
   _lastPollMillis = nowMillis;
 
 #ifdef ARDUINO_ARCH_ESP32
-  if (spi::encodeSlot(nullptr, 0, 0, ++_slotSequence, _txBuffer, spi::SLOT_SIZE) != spi::SlotStatus::Ok) return false;
+  const bool pollingLeft = _pollLeft;
+  const uint8_t side = pollingLeft ? 0 : 1;
+  const protocol::NodeRole role = pollingLeft ? protocol::NodeRole::CameraLeft : protocol::NodeRole::CameraRight;
+  protocol::PacketHeader command;
+  command.type = protocol::MessageType::StreamConfigure;
+  command.source = protocol::NodeRole::Controller;
+  command.target = role;
+  command.bootId = _controllerBootId;
+  command.sequence = ++_slotSequence;
+  uint8_t payload[stream::CONFIG_SIZE];
+  uint8_t requestPacket[protocol::PACKET_HEADER_SIZE + stream::CONFIG_SIZE + protocol::PACKET_CRC_SIZE];
+  size_t requestSize = 0;
+  if (!stream::encodeConfig(_streamConfig, payload, sizeof(payload))
+      || protocol::encodePacket(command, payload, sizeof(payload), requestPacket, sizeof(requestPacket), &requestSize) != protocol::PacketStatus::Ok
+      || spi::encodeSlot(requestPacket, requestSize, 0, _slotSequence, _txBuffer, spi::SLOT_SIZE) != spi::SlotStatus::Ok) return false;
 
   spi_transaction_t transaction = {};
   transaction.length = spi::SLOT_SIZE * 8;
   transaction.rxlength = spi::SLOT_SIZE * 8;
   transaction.tx_buffer = _txBuffer;
   transaction.rx_buffer = _rxBuffer;
-  const bool pollingLeft = _pollLeft;
   spi_device_handle_t device = static_cast<spi_device_handle_t>(pollingLeft ? _leftDevice : _rightDevice);
   _pollLeft = !_pollLeft;
   if (pollingLeft) _leftPolls++;
@@ -171,6 +192,9 @@ bool CinemaSpiMaster::poll(protocol::PacketView* packet, protocol::NodeRole* exp
     reportDiagnostics(nowMillis);
     return false;
   }
+  // MOSI can be intact even when the return slot is corrupt or the camera has no frame yet.
+  _requests[side][_nextRequest[side]] = {_slotSequence, nowMillis, true};
+  _nextRequest[side] = (_nextRequest[side] + 1) % stream::REQUEST_HISTORY_SIZE;
 
   spi::SlotView slot;
   if (spi::decodeSlot(_rxBuffer, spi::SLOT_SIZE, &slot) != spi::SlotStatus::Ok) {
@@ -180,8 +204,27 @@ bool CinemaSpiMaster::poll(protocol::PacketView* packet, protocol::NodeRole* exp
   }
   _validSlots++;
   reportDiagnostics(nowMillis);
+  // A full-duplex response was queued before this command. Validate against earlier polls only:
+  // a stopped master must never make a camera's old DMA slot look like a newly captured frame.
+  bool fresh = slot.packet.header.type != protocol::MessageType::FrameRgb;
+  if (!fresh) {
+    protocol::FrameRgbView frame;
+    if (protocol::decodeFrameRgbPayload(slot.packet.payload, slot.packet.payloadSize, &frame) == protocol::PacketStatus::Ok
+        && frame.header.controllerBootId == _controllerBootId && frame.header.pollSequence != _slotSequence) {
+      for (const auto& request : _requests[side]) {
+        if (request.valid && request.sequence == frame.header.pollSequence
+            && static_cast<uint32_t>(nowMillis - request.sentMillis) <= stream::FRAME_TIMEOUT_MS) {
+          _frameRequestMillis = request.sentMillis;
+          fresh = true;
+          break;
+        }
+      }
+    }
+  }
+  // A stale RGB response still proves that the wired link is alive; only its colors are rejected.
+  _frameIsFresh = fresh;
   *packet = slot.packet;
-  *expectedSource = pollingLeft ? protocol::NodeRole::CameraLeft : protocol::NodeRole::CameraRight;
+  *expectedSource = role;
   return true;
 #else
   return false;

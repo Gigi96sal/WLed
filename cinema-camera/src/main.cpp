@@ -1,4 +1,6 @@
 #include <Arduino.h>
+#include <algorithm>
+#include <esp_timer.h>
 
 #include "camera_service.h"
 #include "spi_slave_endpoint.h"
@@ -12,6 +14,12 @@ namespace {
 
 cinema::camera::CameraService cameraService;
 cinema::camera::SpiSlaveEndpoint spiEndpoint(static_cast<cinema::protocol::NodeRole>(CINEMA_CAMERA_ROLE));
+cinema::stream::Frame rgbFrame;
+bool streamingReady = false;
+uint32_t frameId = 0;
+uint64_t lastCaptureUs = 0;
+uint64_t lastAttemptUs = 0;
+uint64_t lastPublishedUs = 0;
 
 void spiTask(void*) {
   while (true) spiEndpoint.run();
@@ -31,10 +39,45 @@ void setup() {
   }
   if (xTaskCreatePinnedToCore(spiTask, "CinemaSPI", 4096, nullptr, 3, nullptr, 0) != pdPASS) {
     Serial.println("Cinema SPI task creation failed");
+    return;
   }
+  streamingReady = true;
 }
 
+// Acquisition may wait for the sensor; keeping it on this task leaves SPI responsive throughout.
 void loop() {
-  delay(1000);
+  if (!streamingReady) { delay(100); return; }
+  cinema::stream::CaptureRequest request;
+  const uint64_t nowUs = esp_timer_get_time();
+  if (!spiEndpoint.captureRequest(&request) || request.count == 0
+      || nowUs - lastAttemptUs < 1000000U / request.config.fps) {
+    delay(1);
+    return;
+  }
+  lastAttemptUs = nowUs;
+  camera_fb_t* frame = cameraService.acquire();
+  if (!frame) { delay(1); return; }
+  const uint64_t captureUs = static_cast<uint64_t>(frame->timestamp.tv_sec) * 1000000ULL + frame->timestamp.tv_usec;
+  uint32_t pollSequence = 0;
+  // The driver can return an image captured before the newest command. Select its earlier
+  // command from the bounded history; never label an old framebuffer with a newer request.
+  if (frame->format == PIXFORMAT_RGB565 && captureUs > lastCaptureUs && spiEndpoint.captureRequest(&request)
+      && request.requestForCapture(captureUs, esp_timer_get_time(), &pollSequence)
+      && cinema::stream::sampleRgb565(request.config, static_cast<cinema::protocol::NodeRole>(CINEMA_CAMERA_ROLE),
+          frame->buf, frame->len, frame->width, frame->height, rgbFrame.colors, sizeof(rgbFrame.colors))) {
+    rgbFrame.header.configGeneration = request.config.generation;
+    rgbFrame.header.controllerBootId = request.controllerBootId;
+    rgbFrame.header.pollSequence = pollSequence;
+    rgbFrame.header.frameId = ++frameId;
+    rgbFrame.header.captureTimeUs = captureUs;
+    rgbFrame.header.slotCount = cinema::stream::slotCount(request.config, static_cast<cinema::protocol::NodeRole>(CINEMA_CAMERA_ROLE));
+    const uint64_t interval = captureUs - lastPublishedUs;
+    rgbFrame.header.fpsQ8_8 = lastPublishedUs > 0 && interval > 0 ? static_cast<uint16_t>(std::min<uint64_t>(UINT16_MAX, 256000000ULL / interval)) : 0;
+    spiEndpoint.publishFrame(rgbFrame);
+    lastPublishedUs = captureUs;
+    lastCaptureUs = captureUs;
+  }
+  cameraService.release(frame);
+  delay(1);
 }
 // AI: end

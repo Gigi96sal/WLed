@@ -23,23 +23,35 @@ struct StaticQueue_t {
   std::mutex mutex;
   uint8_t* storage = nullptr;
   size_t itemSize = 0;
+  bool filled = false;
 };
 using QueueHandle_t = StaticQueue_t*;
 inline QueueHandle_t xQueueCreateStatic(size_t length, size_t itemSize, uint8_t* storage, StaticQueue_t* control) {
   assert(length == 1);
   control->storage = storage;
   control->itemSize = itemSize;
+  control->filled = false;
   return control;
 }
 inline BaseType_t xQueueOverwrite(QueueHandle_t queue, const void* item) {
   std::lock_guard<std::mutex> lock(queue->mutex);
   memcpy(queue->storage, item, queue->itemSize);
+  queue->filled = true;
   return pdPASS;
 }
 inline BaseType_t xQueuePeek(QueueHandle_t queue, void* item, TickType_t timeout) {
   assert(timeout == 0);
   std::lock_guard<std::mutex> lock(queue->mutex);
+  if (!queue->filled) return 0;
   memcpy(item, queue->storage, queue->itemSize);
+  return pdPASS;
+}
+inline BaseType_t xQueueReceive(QueueHandle_t queue, void* item, TickType_t timeout) {
+  assert(timeout == 0);
+  std::lock_guard<std::mutex> lock(queue->mutex);
+  if (!queue->filled) return 0;
+  memcpy(item, queue->storage, queue->itemSize);
+  queue->filled = false;
   return pdPASS;
 }
 
@@ -62,6 +74,8 @@ struct spi_bus_config_t {
 };
 struct spi_device_interface_config_t { int clock_speed_hz, mode, queue_size, spics_io_num; };
 struct spi_transaction_t { size_t length, rxlength; const void* tx_buffer; void* rx_buffer; };
+struct spi_slave_interface_config_t { int mode, spics_io_num, queue_size; };
+struct spi_slave_transaction_t { size_t length, trans_len; const void* tx_buffer; void* rx_buffer; };
 struct FakeSpiDevice { int cs = -1; bool active = false; };
 using spi_device_handle_t = FakeSpiDevice*;
 struct managed_pin_type { int8_t pin; bool output; };
@@ -83,9 +97,28 @@ inline int selectedMiso = -1;
 inline int matrixFlags = 0;
 inline std::vector<int> returnPins;
 inline uint32_t sequence = 0;
+inline uint32_t randomId = 100;
+inline std::function<void(bool, spi_transaction_t*)> exchange;
+inline spi_transaction_t* slaveTransaction = nullptr;
 }
 
 inline uint32_t millis() { return cinemaTest::nowMillis; }
+inline int64_t esp_timer_get_time() { return static_cast<int64_t>(millis()) * 1000; }
+inline uint32_t esp_random() { return ++cinemaTest::randomId; }
+inline void delay(uint32_t) {}
+constexpr uint32_t portMAX_DELAY = UINT32_MAX;
+struct FakeSerial { template<typename... Args> void printf(const char*, Args...) {} };
+inline FakeSerial Serial;
+inline esp_err_t spi_slave_initialize(int, const spi_bus_config_t*, const spi_slave_interface_config_t*, int) { return ESP_OK; }
+inline esp_err_t spi_slave_free(int) { return ESP_OK; }
+inline esp_err_t spi_slave_transmit(int, spi_slave_transaction_t* slave, uint32_t) {
+  auto master = cinemaTest::slaveTransaction;
+  assert(master && master->length == slave->length);
+  memcpy(master->rx_buffer, slave->tx_buffer, cinema::spi::SLOT_SIZE);
+  memcpy(slave->rx_buffer, master->tx_buffer, cinema::spi::SLOT_SIZE);
+  slave->trans_len = slave->length;
+  return ESP_OK;
+}
 #define DEBUG_PRINTF(...) ((void)0)
 #define RGBW32(r,g,b,w) ((uint32_t(w) << 24) | (uint32_t(r) << 16) | (uint32_t(g) << 8) | uint32_t(b))
 class Segment {
@@ -149,8 +182,13 @@ inline esp_err_t spi_device_transmit(spi_device_handle_t handle, spi_transaction
   const bool left = handle->cs == 5;
   assert(cinemaTest::selectedMiso == (left ? 19 : 21));
   cinemaTest::returnPins.push_back(cinemaTest::selectedMiso);
+  if (cinemaTest::exchange) {
+    cinemaTest::exchange(left, transaction);
+    return ESP_OK;
+  }
   spi::SlotView request;
-  assert(spi::decodeSlot(static_cast<const uint8_t*>(transaction->tx_buffer), spi::SLOT_SIZE, &request) == spi::SlotStatus::Empty);
+  assert(spi::decodeSlot(static_cast<const uint8_t*>(transaction->tx_buffer), spi::SLOT_SIZE, &request) == spi::SlotStatus::Ok);
+  assert(request.packet.header.type == protocol::MessageType::StreamConfigure);
   protocol::PacketHeader heartbeat;
   heartbeat.type = protocol::MessageType::Heartbeat;
   heartbeat.source = left ? protocol::NodeRole::CameraLeft : protocol::NodeRole::CameraRight;
