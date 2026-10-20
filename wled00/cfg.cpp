@@ -60,7 +60,7 @@ static bool deserializeCinemaConfig(JsonObject root, bool fromFS) {
   const uint32_t leftLeds = cinemaSettings["left"] | 0;
   const uint32_t zeroCorner = cinemaSettings["zero"] | 0;
 
-  if ((schemaVersion < 1 || schemaVersion > 4) || topLeds > cinema::wled::MAX_CINEMA_LEDS || rightLeds > cinema::wled::MAX_CINEMA_LEDS || bottomLeds > cinema::wled::MAX_CINEMA_LEDS || leftLeds > cinema::wled::MAX_CINEMA_LEDS || zeroCorner > static_cast<uint8_t>(cinema::wled::ZeroCorner::BottomLeft)) {
+  if ((schemaVersion < 1 || schemaVersion > 5) || topLeds > cinema::wled::MAX_CINEMA_LEDS || rightLeds > cinema::wled::MAX_CINEMA_LEDS || bottomLeds > cinema::wled::MAX_CINEMA_LEDS || leftLeds > cinema::wled::MAX_CINEMA_LEDS || zeroCorner > static_cast<uint8_t>(cinema::wled::ZeroCorner::BottomLeft)) {
     if (fromFS) cinemaController.applyConfig(cinema::wled::CinemaConfig());
     return !fromFS;
   }
@@ -74,6 +74,24 @@ static bool deserializeCinemaConfig(JsonObject root, bool fromFS) {
   config.leftLeds = static_cast<uint16_t>(leftLeds);
   config.zeroCorner = static_cast<cinema::wled::ZeroCorner>(zeroCorner);
   config.clockwise = cinemaSettings["cw"] | true;
+
+  if (schemaVersion >= 5) {
+    JsonObject calibration = cinemaSettings["cal"];
+    for (uint8_t side = 0; side < 2; side++) {
+      JsonArray corners = calibration[side == 0 ? "left" : "right"];
+      auto& quad = side == 0 ? config.leftCalibration : config.rightCalibration;
+      bool valid = !corners.isNull() && corners.size() == 4;
+      for (uint8_t corner = 0; valid && corner < 4; corner++) {
+        JsonArray point = corners[corner];
+        valid = !point.isNull() && point.size() == 2 && point[0].is<uint16_t>() && point[1].is<uint16_t>();
+        if (valid) quad.points[corner] = {point[0].as<uint16_t>(), point[1].as<uint16_t>()};
+      }
+      if (!valid || !quad.isValid()) {
+        if (fromFS) cinemaController.applyConfig(cinema::wled::CinemaConfig());
+        return !fromFS;
+      }
+    }
+  }
 
   if (schemaVersion >= 2) {
     JsonObject spiSettings = cinemaSettings["spi"];
@@ -121,13 +139,13 @@ static bool deserializeCinemaConfig(JsonObject root, bool fromFS) {
     return !fromFS;
   }
   const bool applied = cinemaController.applyConfig(config);
-  return applied && schemaVersion == 4;
+  return applied && schemaVersion == 5;
 }
 
 static void serializeCinemaConfig(JsonObject root) {
   const cinema::wled::CinemaConfig config = cinemaController.config();
   JsonObject cinemaSettings = root.createNestedObject("cinema");
-  cinemaSettings["v"] = 4;
+  cinemaSettings["v"] = 5;
   cinemaSettings["on"] = config.enabled;
   cinemaSettings["gen"] = config.generation;
   cinemaSettings["top"] = config.topLeds;
@@ -136,6 +154,16 @@ static void serializeCinemaConfig(JsonObject root) {
   cinemaSettings["left"] = config.leftLeds;
   cinemaSettings["zero"] = static_cast<uint8_t>(config.zeroCorner);
   cinemaSettings["cw"] = config.clockwise;
+  JsonObject calibration = cinemaSettings.createNestedObject("cal");
+  for (uint8_t side = 0; side < 2; side++) {
+    JsonArray corners = calibration.createNestedArray(side == 0 ? "left" : "right");
+    const auto& quad = side == 0 ? config.leftCalibration : config.rightCalibration;
+    for (const auto& point : quad.points) {
+      JsonArray coordinates = corners.createNestedArray();
+      coordinates.add(point.x);
+      coordinates.add(point.y);
+    }
+  }
   JsonObject spiSettings = cinemaSettings.createNestedObject("spi");
   spiSettings["sclk"] = config.spi.sclkPin;
   spiSettings["mosi"] = config.spi.mosiPin;

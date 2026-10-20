@@ -14,6 +14,7 @@ bool CinemaConfig::isStructurallyValid() const {
   if (totalLeds() > MAX_CINEMA_LEDS) return false;
   if (static_cast<uint8_t>(zeroCorner) > static_cast<uint8_t>(ZeroCorner::BottomLeft)) return false;
   if (!spi.isStructurallyValid()) return false;
+  if (!leftCalibration.isValid() || !rightCalibration.isValid()) return false;
   return !enabled || (generation != 0 && totalLeds() != 0 && spi.isComplete());
 }
 
@@ -70,6 +71,7 @@ void CinemaController::service(uint32_t nowMillis) {
   const ConfigUpdate update = requestedConfig();
   if (!_hasAppliedConfig || update.revision != _appliedConfigRevision) {
     _spiMaster.end();
+    _cancelPreview = true;
     _config = update.config;
     clearFrames();
     _appliedConfigRevision = update.revision;
@@ -79,6 +81,12 @@ void CinemaController::service(uint32_t nowMillis) {
 
   protocol::PacketView packet;
   protocol::NodeRole expectedSource;
+  if (_cancelPreview && _preview.cancel()) _cancelPreview = false;
+  _preview.service(nowMillis);
+  PreviewInfo previewInfo;
+  if (!_cancelPreview && _preview.info(&previewInfo) && previewInfo.state == PreviewState::Capturing) {
+    _spiMaster.setPreviewRequest(previewInfo.role, previewInfo.id, previewInfo.received);
+  } else _spiMaster.setPreviewRequest(protocol::NodeRole::Unspecified, 0, 0);
   if (_spiMaster.poll(&packet, &expectedSource, nowMillis) && processPacket(packet, expectedSource, nowMillis, _spiMaster.frameIsFresh())
       && packet.header.type == protocol::MessageType::FrameRgb) {
     // Use the request's time as a conservative capture bound, rather than refreshing stale RGB on arrival.
@@ -219,6 +227,7 @@ bool CinemaController::processPacket(const protocol::PacketView& packet, protoco
   status.lastSequence = packet.header.sequence;
 
   if (packet.header.type == protocol::MessageType::Heartbeat) return true;
+  if (packet.header.type == protocol::MessageType::SnapshotChunk) return _preview.accept(packet, _spiMaster.controllerBootId());
   if (packet.header.type == protocol::MessageType::FrameRgb) return frameIsFresh && acceptFrame(packet, nowMillis);
   return false;
 }

@@ -71,6 +71,8 @@ class CinemaSpiMaster {
     uint32_t transferErrors() const { return _transferErrors; }
     uint32_t frameRequestMillis() const { return _frameRequestMillis; }
     bool frameIsFresh() const { return _frameIsFresh; }
+    uint32_t controllerBootId() const { return _controllerBootId; }
+    void setPreviewRequest(protocol::NodeRole role, uint32_t id, uint16_t offset) { _previewRole = role; _previewId = id; _previewOffset = offset; }
 
   private:
     void releasePins();
@@ -88,6 +90,9 @@ class CinemaSpiMaster {
     uint32_t _controllerBootId = 0;
     uint32_t _frameRequestMillis = 0;
     bool _frameIsFresh = false;
+    protocol::NodeRole _previewRole = protocol::NodeRole::Unspecified;
+    uint32_t _previewId = 0;
+    uint16_t _previewOffset = 0;
     CinemaSpiStatus _status = CinemaSpiStatus::Disabled;
     void* _leftDevice = nullptr;
     void* _rightDevice = nullptr;

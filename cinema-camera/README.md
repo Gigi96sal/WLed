@@ -18,15 +18,16 @@ by the [Espressif driver](https://github.com/espressif/esp32-camera#important-to
 This avoids continuous multi-buffer capture; actual throughput depends on sensor
 exposure, single-buffer acquisition time and bus speed, and must be measured on hardware.
 
-**Flash WLED and both cameras together.** Protocol major version 2 adds controller
-session and poll references to RGB frames. Version 1 heartbeat firmware is incompatible.
-The SPI wiring and persisted WLED configuration schema 4 are unchanged.
+**Flash WLED and both cameras together.** Protocol major version 3 adds calibrated
+corners and thumbnail requests. Versions 1 and 2 are incompatible. Persisted schema
+5 stores both quadrilaterals; schema 4 migrates with identity corners (full image),
+preserving the existing configuration. Older shared-MISO schemas still load disabled.
+The SPI wiring is unchanged.
 
-Each camera must see its own half of the screen, upright and unmirrored: the left
-image fills the left half, and the right image fills the right half. This initial
-sampler assumes a rectangular screen filling each image; perspective calibration,
-automatic screen detection and rotation/mirror controls are not implemented yet.
-Align the cameras physically before assessing the colors. Each LED averages a
+Each camera must see all four corners of its own screen half. Use perspective
+calibration to mark those corners; the screen need not fill the sensor image and
+the camera may be rotated or mirrored. This compensates for planar perspective,
+not curved-screen geometry, lens distortion or automatic screen detection. Each LED averages a
 3x3 pixel patch, centered 5% inward from the relevant outer screen edge. Top and
 bottom samples account for each half's position in the full screen. On odd edges,
 the center LED belongs to the right camera. The internal order is top left-to-right,
@@ -41,6 +42,41 @@ frames turn only that camera's portion black. Heartbeats maintain link status
 while the sensor is not producing valid RGB; check increasing frame counters too.
 
 Use another WLED effect first to test the LED strip itself.
+
+## Perspective calibration
+
+1. Build and upload all three firmwares. Enable Cinema, configure the SPI pins and
+	perimeter counts, and save. Both links should report connected.
+2. Display a bright rectangle filling the TV with a vertical center line. Avoid
+	black bars, overscan or a pattern that hides the actual screen boundary.
+3. Open `Config` → `Cinema` → `Camera perspective calibration`. Select `Left half`
+	and press `Load camera photo`. The snapshot takes a few seconds and is a color
+	128x96 thumbnail of the original sensor image, before any geometry correction.
+4. Drag TL, TR, BR, BL onto the **left half's** top-left, top-right, bottom-right
+	and bottom-left screen corners. Its right-hand corners lie on the TV center line.
+	The labels refer to screen orientation, not the top/bottom of the sensor image.
+	Use numeric X/Y percentages for keyboard adjustment. `Rotate labels` and
+	`Mirror labels` change the semantic corner order without moving the camera image.
+5. Check the corrected half-screen preview. A rectangular test pattern should look
+	rectangular. Crossing corners, concave/flat regions, extremely short edges and
+	regions smaller than 1% of the sensor image are rejected.
+6. Repeat for `Right half`; its left-hand corners lie on the center line. Each
+	camera has its own quadrilateral, retained when switching between the two views.
+7. Press `Save`. The firmware applies a projective homography when selecting LED
+	samples from subsequent RGB frames, and stores the corners in WLED's configuration.
+	The cameras receive the calibration automatically over SPI, including after reboot.
+8. Reload the page to verify persistence, then test a bright patch moving around
+	the outer screen edges. Recalibrate whenever either camera moves.
+
+Photos use the same settings PIN policy as Cinema settings. One camera photo is
+transferred at a time, in CRC-protected 1024-byte chunks with automatic retries.
+RGB responses receive at least every other camera poll during photo transfer;
+sensor frame rate and LED/network load still affect freshness. The camera holds
+its immutable thumbnail in PSRAM. WLED allocates one 24 KiB image only on request,
+copies small HTTP chunks, and releases it after 30 seconds. The browser retains
+its downloaded photo locally; no photo is stored in flash or sent to an external service.
+A failed or expired capture shows an error and can be retried. A controller or
+camera reboot cannot combine parts of different snapshots.
 
 ## Required hardware
 
@@ -385,8 +421,9 @@ that either camera is responding; check both camera connection states as well.
 | Only one camera disconnected | Check that camera's CS wire and power, then confirm its left/right firmware role |
 | Connections swap or one role is rejected | Confirm CS Left reaches the board flashed as `camera_left` and CS Right reaches `camera_right` |
 | Links connect only at low speed | Improve ground returns and cable topology, shorten stubs, and adjust series damping before raising the clock |
-| Cinema effect is black with both links connected | Check increasing frame counters, nonzero configuration generation/counts, exact segment length, effect selection, and that all three devices run protocol v2 |
-| Frames increase but colors follow the wrong screen edge | Verify camera roles, upright/unmirrored half-screen framing, strip zero corner and direction |
+| Cinema effect is black with both links connected | Check increasing frame counters, nonzero configuration generation/counts, exact segment length, effect selection, and that all three devices run protocol v3 |
+| Frames increase but colors follow the wrong screen edge | Verify camera roles, semantic calibration corner labels, strip zero corner and direction |
+| Photo busy/unavailable or capture times out | Enable and save Cinema first, check the camera link/settings PIN, and retry after the previous capture completes; a memory allocation failure can also prevent starting a photo |
 | Occasional black portions despite connected links | Check frame counters and SPI errors, sensor exposure/frame rate, power stability, and bus frequency; reduce LED/network workload on WLED |
 
 ## Acceptance checklist
@@ -420,7 +457,9 @@ independent MISO selection, and cleanup after GPIO allocation failures. RGB chec
 cover sensor byte order, uneven perimeter counts, both edge directions, truncated
 images, command history, and full-duplex exchanges between the real SPI slave and
 controller code. They also exercise lost commands, stale queued frames, controller
-and camera reboots, and configuration changes.
+and camera reboots, and configuration changes. Calibration checks verify an
+analytic projective mapping, mirrored/rotated corner ordering, degenerate region
+rejection, exact configuration persistence, thumbnail chunk retries and expiry.
 
 The hardware acceptance checklist above remains required for electrical timing,
 camera initialization, and reset/reconnect behavior.

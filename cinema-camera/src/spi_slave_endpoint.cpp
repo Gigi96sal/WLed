@@ -38,6 +38,11 @@ bool SpiSlaveEndpoint::begin() {
     return false;
   }
   _initialized = true;
+  _previewMutex = xSemaphoreCreateMutexStatic(&_previewMutexControl);
+  _previewPixels = static_cast<uint8_t*>(heap_caps_malloc(preview::IMAGE_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  _previewId = _previewControllerBootId = 0;
+  _previewTurn = false;
+  if (!_previewMutex || !_previewPixels) { end(); return false; }
 
   _request = stream::CaptureRequest();
   _requestQueue = xQueueCreateStatic(1, sizeof(stream::CaptureRequest), _requestQueueStorage, &_requestQueueControl);
@@ -59,6 +64,10 @@ void SpiSlaveEndpoint::end() {
   if (_initialized) spi_slave_free(SPI2_HOST);
   if (_rxBuffer) heap_caps_free(_rxBuffer);
   if (_txBuffer) heap_caps_free(_txBuffer);
+  if (_previewPixels) heap_caps_free(_previewPixels);
+  if (_previewMutex) vSemaphoreDelete(_previewMutex);
+  _previewPixels = nullptr;
+  _previewMutex = nullptr;
   _rxBuffer = nullptr;
   _txBuffer = nullptr;
   _initialized = false;
@@ -86,6 +95,8 @@ bool SpiSlaveEndpoint::prepareHeartbeat() {
 
 // Only the SPI task touches DMA storage, and only after the previous transaction has completed.
 bool SpiSlaveEndpoint::prepareNextSlot() {
+  if (_previewTurn && preparePreviewChunk()) { _previewTurn = false; return true; }
+  _previewTurn = true;
   if (xQueueReceive(_frameQueue, &_outgoingFrame, 0) == pdPASS) {
     const auto& frame = _outgoingFrame.header;
     const uint64_t nowUs = esp_timer_get_time();
@@ -99,7 +110,32 @@ bool SpiSlaveEndpoint::prepareNextSlot() {
       }
     }
   }
+  if (preparePreviewChunk()) { _previewTurn = false; return true; }
   return prepareHeartbeat();
+}
+
+// Pull responses repeat until the controller advances its offset; RGB gets at least every other slot.
+bool SpiSlaveEndpoint::preparePreviewChunk() {
+  if (_request.previewId == 0 || !_previewMutex || xSemaphoreTake(_previewMutex, 0) != pdTRUE) return false;
+  bool ready = _previewId == _request.previewId && _previewControllerBootId == _request.controllerBootId;
+  if (ready) {
+    protocol::writeU32Le(_payloadBuffer, _previewId);
+    protocol::writeU32Le(_payloadBuffer + 4, _previewControllerBootId);
+    protocol::writeU16Le(_payloadBuffer + 8, _request.previewOffset);
+    protocol::writeU16Le(_payloadBuffer + 10, preview::CHUNK_SIZE);
+    memcpy(_payloadBuffer + preview::HEADER_SIZE, _previewPixels + _request.previewOffset, preview::CHUNK_SIZE);
+  }
+  xSemaphoreGive(_previewMutex);
+  return ready && preparePacket(protocol::MessageType::SnapshotChunk, _payloadBuffer, preview::HEADER_SIZE + preview::CHUNK_SIZE);
+}
+
+// Capture converts directly into a PSRAM thumbnail under a bounded mutex; SPI skips it while busy.
+bool SpiSlaveEndpoint::publishPreview(const stream::CaptureRequest& request, const uint8_t* image, size_t length, size_t width, size_t height) {
+  if (request.previewId == 0 || !_previewMutex || xSemaphoreTake(_previewMutex, pdMS_TO_TICKS(5)) != pdTRUE) return false;
+  const bool ready = preview::makeImage(image, length, width, height, _previewPixels);
+  if (ready) { _previewId = request.previewId; _previewControllerBootId = request.controllerBootId; }
+  xSemaphoreGive(_previewMutex);
+  return ready;
 }
 
 // Queue copies isolate capture on the Arduino loop task from SPI transmission on core 0.

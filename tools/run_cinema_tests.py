@@ -36,7 +36,7 @@ def main():
     msvc = Path(compiler).stem.lower() == "cl"
     with tempfile.TemporaryDirectory(prefix="wled-cinema-tests-") as directory:
         temporary = Path(directory)
-        for header in ("wled.h", "Arduino.h", "freertos/FreeRTOS.h", "freertos/queue.h", "driver/gpio.h", "driver/spi_master.h", "driver/spi_slave.h", "esp_heap_caps.h", "esp_rom_gpio.h", "esp_system.h", "esp_timer.h", "soc/spi_periph.h"):
+        for header in ("wled.h", "Arduino.h", "freertos/FreeRTOS.h", "freertos/queue.h", "freertos/semphr.h", "driver/gpio.h", "driver/spi_master.h", "driver/spi_slave.h", "esp_heap_caps.h", "esp_rom_gpio.h", "esp_system.h", "esp_timer.h", "soc/spi_periph.h"):
             destination = temporary / header
             destination.parent.mkdir(parents=True, exist_ok=True)
             contents = '#include "cinema_test_support.h"\n'
@@ -49,10 +49,11 @@ def main():
         (temporary / "cinema_config_under_test.h").write_text(config_source[start:end], encoding="utf-8")
         unsupported = temporary / "unsupported.cpp"
         unsupported.write_text('#include "wled.h"\nint main(){ cinema::wled::CinemaController controller; cinema::wled::CinemaConfig config; config.generation=7; assert(controller.applyConfig(config)); controller.begin(); controller.service(millis()); assert(controller.config().generation==7 && !controller.transportReady()); }\n', encoding="utf-8")
-        production = [root / "wled00/cinema/cinema_controller.cpp", root / "wled00/cinema/cinema_spi_master.cpp"]
+        production = [root / "wled00/cinema/cinema_controller.cpp", root / "wled00/cinema/cinema_spi_master.cpp", root / "wled00/cinema/cinema_preview.cpp"]
         cases = {
             "protocol": [root / "tools/cinema_protocol_test.cpp"],
             "stream": [root / "tools/cinema_stream_test.cpp", root / "cinema-camera/src/spi_slave_endpoint.cpp", *production],
+            "calibration": [root / "tools/cinema_calibration_test.cpp", root / "cinema-camera/src/spi_slave_endpoint.cpp", *production],
             "controller": [root / "tools/cinema_controller_test.cpp", *production],
             "config": [root / "tools/cinema_config_test.cpp", *production],
             "unsupported": [unsupported, *production],

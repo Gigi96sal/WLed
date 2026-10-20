@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
+#include <freertos/semphr.h>
 
 #include "cinema_spi_protocol.h"
 #include "cinema_stream.h"
@@ -23,10 +24,12 @@ class SpiSlaveEndpoint {
     void run();
     bool captureRequest(stream::CaptureRequest* request) const;
     bool publishFrame(const stream::Frame& frame);
+    bool publishPreview(const stream::CaptureRequest& request, const uint8_t* image, size_t length, size_t width, size_t height);
 
   private:
     bool prepareHeartbeat();
     bool prepareNextSlot();
+    bool preparePreviewChunk();
     bool preparePacket(protocol::MessageType type, const uint8_t* payload, size_t payloadSize);
     void processReceivedSlot(size_t receivedBytes);
     void reportDiagnostics(uint32_t nowMillis);
@@ -52,6 +55,12 @@ class SpiSlaveEndpoint {
     uint8_t _frameQueueStorage[sizeof(stream::Frame)];
     QueueHandle_t _requestQueue = nullptr;
     QueueHandle_t _frameQueue = nullptr;
+    StaticSemaphore_t _previewMutexControl;
+    SemaphoreHandle_t _previewMutex = nullptr;
+    uint8_t* _previewPixels = nullptr;
+    uint32_t _previewId = 0;
+    uint32_t _previewControllerBootId = 0;
+    bool _previewTurn = false;
     bool _initialized = false;
 };
 

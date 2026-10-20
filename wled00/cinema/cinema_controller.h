@@ -14,6 +14,7 @@
 
 #include "cinema_protocol.h"
 #include "cinema_spi_master.h"
+#include "cinema_preview.h"
 
 class Segment;
 
@@ -64,9 +65,11 @@ struct CinemaConfig {
   bool clockwise = true;
   CinemaSpiConfig spi;
   CinemaColorConfig color;
+  geometry::Quad leftCalibration;
+  geometry::Quad rightCalibration;
 
   uint16_t totalLeds() const;
-  stream::Config streamConfig() const { return {generation, topLeds, rightLeds, bottomLeds, leftLeds, stream::DEFAULT_FPS}; }
+  stream::Config streamConfig() const { return {generation, topLeds, rightLeds, bottomLeds, leftLeds, stream::DEFAULT_FPS, leftCalibration, rightCalibration}; }
   bool isStructurallyValid() const;
   bool isValidForSegment(uint16_t segmentLength) const;
 };
@@ -100,6 +103,7 @@ class CinemaController {
     CameraSide ownerForCanonicalSlot(uint16_t canonicalSlot) const;
     uint16_t physicalIndexForCanonicalSlot(uint16_t canonicalSlot) const;
     bool hasFreshFrame(CameraSide side, uint32_t nowMillis) const;
+    CinemaPreview& preview() { return _preview; }
 
   private:
     using PixelStorage = std::array<uint8_t, MAX_CINEMA_LEDS * 3>;
@@ -135,6 +139,8 @@ class CinemaController {
 #endif
     uint32_t _appliedConfigRevision = 0;
     CinemaSpiMaster _spiMaster;
+    CinemaPreview _preview;
+    bool _cancelPreview = false;
     PixelStorage _leftPixels{};
     PixelStorage _rightPixels{};
     SmoothStorage _smoothedPixels{};

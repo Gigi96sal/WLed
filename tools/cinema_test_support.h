@@ -9,6 +9,7 @@
 #include <cstring>
 #include <functional>
 #include <mutex>
+#include <chrono>
 #include <thread>
 #include <vector>
 
@@ -19,6 +20,17 @@
 using BaseType_t = int;
 using TickType_t = uint32_t;
 constexpr BaseType_t pdPASS = 1;
+constexpr BaseType_t pdTRUE = 1;
+inline TickType_t pdMS_TO_TICKS(uint32_t milliseconds) { return milliseconds; }
+struct StaticSemaphore_t { std::timed_mutex mutex; };
+using SemaphoreHandle_t = StaticSemaphore_t*;
+inline SemaphoreHandle_t xSemaphoreCreateMutexStatic(StaticSemaphore_t* mutex) { return mutex; }
+inline BaseType_t xSemaphoreTake(SemaphoreHandle_t mutex, TickType_t ticks) {
+  return mutex->mutex.try_lock_for(std::chrono::milliseconds(ticks)) ? pdTRUE : 0;
+}
+inline void xSemaphoreGive(SemaphoreHandle_t mutex) { mutex->mutex.unlock(); }
+inline void vSemaphoreDelete(SemaphoreHandle_t) {}
+inline void* d_malloc(size_t size) { return malloc(size); }
 struct StaticQueue_t {
   std::mutex mutex;
   uint8_t* storage = nullptr;
@@ -64,6 +76,8 @@ constexpr int SPI2_HOST = 1;
 constexpr int SPI_DMA_CH_AUTO = 3;
 constexpr int MALLOC_CAP_DMA = 1;
 constexpr int MALLOC_CAP_INTERNAL = 2;
+constexpr int MALLOC_CAP_SPIRAM = 4;
+constexpr int MALLOC_CAP_8BIT = 8;
 constexpr int SPICOMMON_BUSFLAG_GPIO_PINS = 4;
 struct SpiSignals { int spiq_in; };
 inline const SpiSignals spi_periph_signal[] = {{0}, {64}};

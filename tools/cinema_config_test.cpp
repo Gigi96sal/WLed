@@ -13,13 +13,25 @@ int main() {
   JsonObject root = document.to<JsonObject>();
   serializeCinemaConfig(root);
   JsonObject settings = root["cinema"];
-  assert(settings["v"].as<unsigned>() == 4);
+  assert(settings["v"].as<unsigned>() == 5);
   assert(settings["spi"]["misor"].as<int>() == 21);
   settings["on"] = true;
   settings["gen"] = 7;
   settings["top"] = 2;
   assert(deserializeCinemaConfig(root, false));
   assert(cinemaController.config().enabled);
+  // Persist the projective corners exactly, and reject malformed geometry before changing generation.
+  settings["cal"]["left"][0][0] = 1000;
+  assert(deserializeCinemaConfig(root, false));
+  assert(cinemaController.config().leftCalibration.points[0].x == 1000);
+  settings["gen"] = 8;
+  settings["cal"]["left"][0][0] = -1;
+  deserializeCinemaConfig(root, false);
+  assert(cinemaController.config().generation == 7);
+  settings["cal"]["left"][0][0] = 1.5;
+  deserializeCinemaConfig(root, false);
+  assert(cinemaController.config().generation == 7);
+  settings["cal"]["left"][0][0] = 1000;
 
   // Sharing the input, or omitting it on an enabled schema-4 config, preserves the previous request.
   settings["gen"] = 8;
@@ -40,7 +52,16 @@ int main() {
   document.clear();
   root = document.to<JsonObject>();
   serializeCinemaConfig(root);
-  assert(root["cinema"]["v"].as<unsigned>() == 4);
+  assert(root["cinema"]["v"].as<unsigned>() == 5);
   assert(root["cinema"]["spi"]["misor"].as<int>() == -1);
+  // Schema 4 preserves its working wiring and enabled state, with identity calibration on migration.
+  root["cinema"]["v"] = 4;
+  root["cinema"]["on"] = true;
+  root["cinema"]["spi"]["miso"] = 19;
+  root["cinema"]["spi"]["misor"] = 21;
+  root["cinema"].remove("cal");
+  assert(!deserializeCinemaConfig(root, true));
+  assert(cinemaController.config().enabled);
+  assert(cinemaController.config().leftCalibration == cinema::geometry::Quad());
 }
 // AI: end

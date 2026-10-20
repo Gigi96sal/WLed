@@ -20,6 +20,8 @@ uint32_t frameId = 0;
 uint64_t lastCaptureUs = 0;
 uint64_t lastAttemptUs = 0;
 uint64_t lastPublishedUs = 0;
+uint32_t lastPreviewId = 0;
+uint32_t lastPreviewControllerBootId = 0;
 
 void spiTask(void*) {
   while (true) spiEndpoint.run();
@@ -65,6 +67,12 @@ void loop() {
       && request.requestForCapture(captureUs, esp_timer_get_time(), &pollSequence)
       && cinema::stream::sampleRgb565(request.config, static_cast<cinema::protocol::NodeRole>(CINEMA_CAMERA_ROLE),
           frame->buf, frame->len, frame->width, frame->height, rgbFrame.colors, sizeof(rgbFrame.colors))) {
+    if (request.previewId != 0 && captureUs >= request.previewStartedUs
+        && (request.previewId != lastPreviewId || request.controllerBootId != lastPreviewControllerBootId)
+        && spiEndpoint.publishPreview(request, frame->buf, frame->len, frame->width, frame->height)) {
+      lastPreviewId = request.previewId;
+      lastPreviewControllerBootId = request.controllerBootId;
+    }
     rgbFrame.header.configGeneration = request.config.generation;
     rgbFrame.header.controllerBootId = request.controllerBootId;
     rgbFrame.header.pollSequence = pollSequence;

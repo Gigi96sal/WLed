@@ -142,6 +142,8 @@ void CinemaSpiMaster::end() {
   _slotSequence = 0;
   _controllerBootId = 0;
   _frameIsFresh = false;
+  _previewRole = protocol::NodeRole::Unspecified;
+  _previewId = _previewOffset = 0;
   for (auto& side : _requests) for (auto& request : side) request = PollRecord();
   _nextRequest[0] = _nextRequest[1] = 0;
   _leftPolls = 0;
@@ -171,7 +173,7 @@ bool CinemaSpiMaster::poll(protocol::PacketView* packet, protocol::NodeRole* exp
   uint8_t payload[stream::CONFIG_SIZE];
   uint8_t requestPacket[protocol::PACKET_HEADER_SIZE + stream::CONFIG_SIZE + protocol::PACKET_CRC_SIZE];
   size_t requestSize = 0;
-  if (!stream::encodeConfig(_streamConfig, payload, sizeof(payload))
+  if (!stream::encodeConfig(_streamConfig, payload, sizeof(payload), role == _previewRole ? _previewId : 0, role == _previewRole ? _previewOffset : 0)
       || protocol::encodePacket(command, payload, sizeof(payload), requestPacket, sizeof(requestPacket), &requestSize) != protocol::PacketStatus::Ok
       || spi::encodeSlot(requestPacket, requestSize, 0, _slotSequence, _txBuffer, spi::SLOT_SIZE) != spi::SlotStatus::Ok) return false;
 
