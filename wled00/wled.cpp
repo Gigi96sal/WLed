@@ -96,6 +96,9 @@ void WLED::loop()
   #ifdef WLED_ENABLE_DMX_INPUT
   dmxInput.update();
   #endif
+  #ifdef ARDUINO_ARCH_ESP32
+  cinemaController.service(millis());
+  #endif
 
   #ifdef WLED_DEBUG
   unsigned long usermodMillis = millis();
@@ -540,6 +543,10 @@ void WLED::setup()
   DEBUG_PRINTLN(F("Initializing strip"));
   beginStrip();
   DEBUG_PRINTF_P(PSTR("heap %u\n"), getFreeHeapSize());
+
+#ifdef ARDUINO_ARCH_ESP32
+  cinemaController.begin();
+#endif
 
   DEBUG_PRINTLN(F("Usermods setup"));
   userSetup();

@@ -73,6 +73,9 @@
 #include <cstddef>
 #include <vector>
 
+#include "cinema/cinema_protocol.h"
+#include "cinema/cinema_spi_protocol.h"
+
 // Library inclusions.
 #include <Arduino.h>
 
@@ -208,6 +211,7 @@ using PSRAMDynamicJsonDocument = BasicJsonDocument<PSRAM_Allocator>;
 #include "pin_manager.h"
 #include "bus_manager.h"
 #include "FX.h"
+#include "cinema/cinema_controller.h"
 #include "wled_metadata.h"
 
 #ifndef CLIENT_SSID
@@ -804,6 +808,7 @@ WLED_GLOBAL bool e131NewData _INIT(false);
 
 // led fx library object
 WLED_GLOBAL WS2812FX   strip         _INIT(WS2812FX());
+WLED_GLOBAL cinema::wled::CinemaController cinemaController _INIT(cinema::wled::CinemaController());
 WLED_GLOBAL std::vector<BusConfig> busConfigs;    //temporary, to remember values from network callback until after
 WLED_GLOBAL bool       doInitBusses  _INIT(false);
 WLED_GLOBAL int8_t     loadLedmap    _INIT(-1);

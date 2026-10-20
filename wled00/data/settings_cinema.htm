@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" name="viewport">
+	<title>Cinema Setup</title>
+	<style> html { visibility: hidden; } </style>
+	<script>
+	let cinemaConfig = {};
+	const maxCinemaLeds = 600;
+
+	(function loadFiles() {
+		const l = document.createElement('script');
+		l.src = 'common.js';
+		l.onload = () => loadResources(['style.css'], S);
+		l.onerror = () => setTimeout(loadFiles, 100);
+		document.head.appendChild(l);
+	})();
+
+	function cinemaCount(id) {
+		return Number.parseInt(gId(id).value, 10) || 0;
+	}
+
+	function cinemaPin(name) {
+		return Number.parseInt(gN(name).value, 10);
+	}
+
+	function cinemaSpiValid(requireComplete) {
+		const pins = ['SCK', 'MO', 'MI', 'MIR', 'CSL', 'CSR'].map(cinemaPin);
+		const configured = pins.filter(pin => pin >= 0);
+		const complete = configured.length === pins.length;
+		const pinsValid = new Set(configured).size === configured.length;
+		const frequency = Number.parseInt(gId('SF').value, 10);
+		return pinsValid && (!requireComplete || complete) && frequency >= 1000000 && frequency <= 10000000;
+	}
+
+	function updateCinemaTotal() {
+		const total = cinemaCount('CT') + cinemaCount('CR') + cinemaCount('CB') + cinemaCount('CL');
+		gId('cinemaTotal').textContent = String(total);
+		const valid = total <= maxCinemaLeds && (!gId('CE').checked || total > 0) && cinemaSpiValid(gId('CE').checked);
+		gId('saveCinema').disabled = !valid;
+		gId('totalError').style.display = valid ? 'none' : 'block';
+	}
+
+	function loadCinemaConfig(config) {
+		cinemaConfig = config || {};
+		gId('CE').checked = !!cinemaConfig.on;
+		gId('CT').value = cinemaConfig.top || 0;
+		gId('CR').value = cinemaConfig.right || 0;
+		gId('CB').value = cinemaConfig.bottom || 0;
+		gId('CL').value = cinemaConfig.left || 0;
+		gId('CZ').value = cinemaConfig.zero || 0;
+		gId('CW').checked = cinemaConfig.cw !== false;
+		const spi = cinemaConfig.spi || {};
+		gN('SCK').value = spi.sclk ?? -1;
+		gN('MO').value = spi.mosi ?? -1;
+		gN('MI').value = spi.miso ?? -1;
+		gN('MIR').value = spi.misor ?? -1;
+		gN('CSL').value = spi.csl ?? -1;
+		gN('CSR').value = spi.csr ?? -1;
+		gId('SF').value = spi.hz || 4000000;
+		const color = cinemaConfig.color || {};
+		gId('CO').value = color.boost ?? 64;
+		gId('CD').value = color.dark ?? 32;
+		gId('CBL').value = color.black ?? 4;
+		gId('CSM').value = color.smooth ?? 96;
+		updateCinemaTotal();
+	}
+
+	function initSpiPinDropdowns() {
+		[['SCK', 1], ['MO', 1], ['MI', 0], ['MIR', 0], ['CSL', 1], ['CSR', 1]].forEach(pin => {
+			const select = makePinSelect(pin[0], pin[1]);
+			if (select) select.onchange = updateCinemaTotal;
+		});
+		updateCinemaTotal();
+	}
+
+	function nextCinemaGeneration() {
+		const generation = (Number(cinemaConfig.gen) || 0) + 1;
+		return generation > 0 ? generation : 1;
+	}
+
+	function cinemaConfigMatches(saved, expected) {
+		if (!saved || saved.v !== expected.v || saved.on !== expected.on || saved.gen !== expected.gen || saved.top !== expected.top || saved.right !== expected.right || saved.bottom !== expected.bottom || saved.left !== expected.left || saved.zero !== expected.zero || saved.cw !== expected.cw) return false;
+		const savedSpi = saved.spi || {};
+		const savedColor = saved.color || {};
+		return savedSpi.sclk === expected.spi.sclk && savedSpi.mosi === expected.spi.mosi && savedSpi.miso === expected.spi.miso && savedSpi.misor === expected.spi.misor && savedSpi.csl === expected.spi.csl && savedSpi.csr === expected.spi.csr && savedSpi.hz === expected.spi.hz && savedColor.boost === expected.color.boost && savedColor.dark === expected.color.dark && savedColor.black === expected.color.black && savedColor.smooth === expected.color.smooth;
+	}
+
+	function saveCinema(event) {
+		event.preventDefault();
+		const config = {
+			v: 4,
+			on: gId('CE').checked,
+			gen: nextCinemaGeneration(),
+			top: cinemaCount('CT'),
+			right: cinemaCount('CR'),
+			bottom: cinemaCount('CB'),
+			left: cinemaCount('CL'),
+			zero: Number.parseInt(gId('CZ').value, 10),
+			cw: gId('CW').checked,
+			spi: {
+				sclk: cinemaPin('SCK'),
+				mosi: cinemaPin('MO'),
+				miso: cinemaPin('MI'),
+				misor: cinemaPin('MIR'),
+				csl: cinemaPin('CSL'),
+				csr: cinemaPin('CSR'),
+				hz: Number.parseInt(gId('SF').value, 10)
+			},
+			color: {
+				boost: Number.parseInt(gId('CO').value, 10),
+				dark: Number.parseInt(gId('CD').value, 10),
+				black: Number.parseInt(gId('CBL').value, 10),
+				smooth: Number.parseInt(gId('CSM').value, 10)
+			}
+		};
+		const status = gId('saveStatus');
+		status.textContent = 'Saving...';
+		gId('saveCinema').disabled = true;
+		fetch(getURL('/json/cfg'), {
+			method: 'POST',
+			headers: {'Content-Type': 'application/json'},
+			body: JSON.stringify({cinema: config})
+		})
+			.then(response => {
+				if (response.status === 401) throw new Error('Settings PIN expired');
+				if (!response.ok) throw new Error('Save failed');
+				return fetch(getURL('/json/cfg'));
+			})
+			.then(response => {
+				if (!response.ok) throw new Error('Save verification failed');
+				return response.json();
+			})
+			.then(savedConfig => {
+				if (!cinemaConfigMatches(savedConfig.cinema, config)) throw new Error('Settings rejected');
+				cinemaConfig = savedConfig.cinema;
+				status.textContent = 'Saved';
+			})
+			.catch(error => {
+				if (error.message === 'Settings PIN expired') {
+					status.textContent = 'Settings PIN expired. Reopening...';
+					setTimeout(() => window.location.assign(getURL('/settings/cinema')), 1000);
+				} else {
+					status.textContent = error.message;
+				}
+			})
+			.finally(updateCinemaTotal);
+	}
+
+	function loadCinemaStatus() {
+		fetch(getURL('/json/cinema'))
+			.then(response => response.ok ? response.json() : Promise.reject())
+			.then(status => {
+				const transportNames = ['Disabled', 'Ready', 'Invalid configuration', 'Pin conflict', 'No DMA memory', 'SPI2 unavailable'];
+				gId('transportStatus').textContent = transportNames[status.transport] || 'Unknown';
+				const spi = status.spi || {};
+				gId('spiDiagnostics').textContent = `polls L/R ${spi.leftPolls || 0}/${spi.rightPolls || 0}, valid ${spi.validSlots || 0}, slot errors ${spi.slotErrors || 0}, transfer errors ${spi.transferErrors || 0}`;
+				gId('leftStatus').textContent = status.left.connected ? `Connected, sequence ${status.left.sequence}, frames ${status.left.frames}` : 'Disconnected';
+				gId('rightStatus').textContent = status.right.connected ? `Connected, sequence ${status.right.sequence}, frames ${status.right.frames}` : 'Disconnected';
+			})
+			.catch(() => gId('transportStatus').textContent = 'Unavailable');
+	}
+
+	function S() {
+		getLoc();
+		gId('form_s').addEventListener('submit', saveCinema);
+		fetch(getURL('/json/cfg'))
+			.then(response => {
+				if (!response.ok) throw new Error('Configuration unavailable');
+				return response.json();
+			})
+			.then(config => {
+				loadCinemaConfig(config.cinema);
+				fetchPinInfo(initSpiPinDropdowns);
+			})
+			.catch(() => gId('saveStatus').textContent = 'Configuration unavailable')
+			.finally(() => document.documentElement.style.visibility = 'visible');
+		loadCinemaStatus();
+		setInterval(loadCinemaStatus, 1000);
+	}
+	</script>
+</head>
+<body>
+<form id="form_s">
+	<div class="toprow">
+	<div class="helpB"><button type="button" disabled>?</button></div>
+	<button type="button" onclick="B()">Back</button><button id="saveCinema" type="submit">Save</button><hr>
+	</div>
+	<h2>Cinema setup</h2>
+	<div class="sec">
+		Enable Cinema: <input id="CE" type="checkbox" onchange="updateCinemaTotal()"><br>
+		LEDs along the perimeter: <span id="cinemaTotal">0</span> / 600
+		<div class="warn" id="totalError" style="display:none">Set a valid perimeter and six distinct, available SPI pins before enabling Cinema.</div>
+	</div>
+	<div class="sec">
+		<h3>Perimeter</h3>
+		Top: <input id="CT" type="number" min="0" max="600" step="1" required oninput="updateCinemaTotal()"><br>
+		Right: <input id="CR" type="number" min="0" max="600" step="1" required oninput="updateCinemaTotal()"><br>
+		Bottom: <input id="CB" type="number" min="0" max="600" step="1" required oninput="updateCinemaTotal()"><br>
+		Left: <input id="CL" type="number" min="0" max="600" step="1" required oninput="updateCinemaTotal()"><br>
+	</div>
+	<div class="sec">
+		<h3>Strip orientation</h3>
+		LED 0:
+		<select id="CZ">
+			<option value="0">Top left</option>
+			<option value="1">Top right</option>
+			<option value="2">Bottom right</option>
+			<option value="3">Bottom left</option>
+		</select><br>
+		Clockwise: <input id="CW" type="checkbox"><br>
+	</div>
+	<div class="sec">
+		<h3>SPI master</h3>
+		Clock: <input name="SCK" type="number" min="-1" max="49" value="-1" onchange="updateCinemaTotal()"><br>
+		MOSI: <input name="MO" type="number" min="-1" max="49" value="-1" onchange="updateCinemaTotal()"><br>
+		Left camera MISO: <input name="MI" type="number" min="-1" max="49" value="-1" onchange="updateCinemaTotal()"><br>
+		Right camera MISO: <input name="MIR" type="number" min="-1" max="49" value="-1" onchange="updateCinemaTotal()"><br>
+		<div class="warn">Connect each camera MISO to its own master input. Never join the two camera MISO outputs.</div>
+		Left camera CS: <input name="CSL" type="number" min="-1" max="49" value="-1" onchange="updateCinemaTotal()"><br>
+		Right camera CS: <input name="CSR" type="number" min="-1" max="49" value="-1" onchange="updateCinemaTotal()"><br>
+		Clock frequency: <input id="SF" type="number" min="1000000" max="10000000" step="1000000" value="4000000" required oninput="updateCinemaTotal()"> Hz<br>
+	</div>
+	<div class="sec">
+		<h3>Color correction</h3>
+		Color boost: <input id="CO" type="range" min="0" max="255" value="64"><br>
+		Dark color boost: <input id="CD" type="range" min="0" max="255" value="32"><br>
+		Black threshold: <input id="CBL" type="range" min="0" max="255" value="4"><br>
+		Smoothness: <input id="CSM" type="range" min="0" max="255" value="96"><br>
+	</div>
+	<div class="sec">
+		<h3>Link status</h3>
+		SPI: <span id="transportStatus">Loading...</span><br>
+		Diagnostics: <span id="spiDiagnostics">Loading...</span><br>
+		Left camera: <span id="leftStatus">Disconnected</span><br>
+		Right camera: <span id="rightStatus">Disconnected</span><br>
+	</div>
+	<div class="sec" id="saveStatus" aria-live="polite"></div>
+</form>
+</body>
+</html>
