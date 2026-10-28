@@ -87,11 +87,10 @@ void CinemaController::service(uint32_t nowMillis) {
   if (!_cancelPreview && _preview.info(&previewInfo) && previewInfo.state == PreviewState::Capturing) {
     _spiMaster.setPreviewRequest(previewInfo.role, previewInfo.id, previewInfo.received);
   } else _spiMaster.setPreviewRequest(protocol::NodeRole::Unspecified, 0, 0);
-  if (_spiMaster.poll(&packet, &expectedSource, nowMillis) && processPacket(packet, expectedSource, nowMillis, _spiMaster.frameIsFresh())
-      && packet.header.type == protocol::MessageType::FrameRgb) {
-    // Use the request's time as a conservative capture bound, rather than refreshing stale RGB on arrival.
-    CameraSide side;
-    if (packetSourceToSide(expectedSource, &side)) frameTimeForSide(side) = _spiMaster.frameRequestMillis();
+  if (_spiMaster.poll(&packet, &expectedSource, nowMillis)) {
+    // SPI validates capture provenance separately. Hold an accepted frame from its actual
+    // reception, after the blocking transfer, so transport latency cannot consume its display time.
+    processPacket(packet, expectedSource, millis(), _spiMaster.frameIsFresh());
   }
 }
 
@@ -119,6 +118,7 @@ bool CinemaController::acceptFrame(const protocol::PacketView& packet, uint32_t 
 
   PixelStorage& pixels = pixelsForSide(side);
   uint16_t sourceSlot = 0;
+  uint8_t maximum = 0;
   for (uint16_t canonicalSlot = 0; canonicalSlot < _config.totalLeds(); canonicalSlot++) {
     if (ownerForCanonicalSlot(canonicalSlot) != side) continue;
     const size_t sourceOffset = static_cast<size_t>(sourceSlot++) * 3;
@@ -126,11 +126,13 @@ bool CinemaController::acceptFrame(const protocol::PacketView& packet, uint32_t 
     pixels[targetOffset] = frame.colors[sourceOffset];
     pixels[targetOffset + 1] = frame.colors[sourceOffset + 1];
     pixels[targetOffset + 2] = frame.colors[sourceOffset + 2];
+    maximum = std::max(maximum, std::max(frame.colors[sourceOffset], std::max(frame.colors[sourceOffset + 1], frame.colors[sourceOffset + 2])));
   }
 
   frameTimeForSide(side) = nowMillis;
   status.lastFrameId = frame.header.frameId;
   status.framesReceived++;
+  status.maxChannel = maximum;
   return true;
 }
 
@@ -186,8 +188,12 @@ uint16_t CinemaController::physicalIndexForCanonicalSlot(uint16_t canonicalSlot)
 }
 
 bool CinemaController::hasFreshFrame(CameraSide side, uint32_t nowMillis) const {
-  const uint32_t frameTime = frameTimeForSide(side);
-  return cameraStatus(side).framesReceived > 0 && static_cast<uint32_t>(nowMillis - frameTime) <= CAMERA_FRAME_TIMEOUT_MS;
+  return frameAgeMillis(side, nowMillis) <= CAMERA_FRAME_TIMEOUT_MS;
+}
+
+// UINT32_MAX identifies a side that has not received an accepted RGB frame in this session.
+uint32_t CinemaController::frameAgeMillis(CameraSide side, uint32_t nowMillis) const {
+  return cameraStatus(side).framesReceived > 0 ? static_cast<uint32_t>(nowMillis - frameTimeForSide(side)) : UINT32_MAX;
 }
 
 const CinemaController::PixelStorage& CinemaController::pixelsForSide(CameraSide side) const {

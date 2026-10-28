@@ -45,6 +45,7 @@ struct CameraRuntimeStatus {
   uint32_t lastSequence = 0;
   uint32_t lastFrameId = 0;
   uint32_t framesReceived = 0;
+  uint8_t maxChannel = 0;
 };
 
 struct CinemaColorConfig {
@@ -103,6 +104,7 @@ class CinemaController {
     CameraSide ownerForCanonicalSlot(uint16_t canonicalSlot) const;
     uint16_t physicalIndexForCanonicalSlot(uint16_t canonicalSlot) const;
     bool hasFreshFrame(CameraSide side, uint32_t nowMillis) const;
+    uint32_t frameAgeMillis(CameraSide side, uint32_t nowMillis) const;
     CinemaPreview& preview() { return _preview; }
 
   private:

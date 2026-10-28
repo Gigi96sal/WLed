@@ -36,9 +36,10 @@ the configured strip origin and direction afterward.
 
 Frames carry the actual sensor capture timestamp and reference a preceding
 configuration poll. The master accepts only references from its current session
-and the last 150 ms. LED freshness uses that poll's time as a conservative capture
-bound, so a queued frame cannot become fresh again after an interruption. Missing
-frames turn only that camera's portion black. Heartbeats maintain link status
+and the last 150 ms, checked after the SPI transfer finishes. This rejects stale
+queued responses after an interruption. Each accepted frame then stays available
+for 150 ms from reception; capture/transport latency does not consume this display
+hold time. Missing frames turn only that camera's portion black. Heartbeats maintain link status
 while the sensor is not producing valid RGB; check increasing frame counters too.
 
 Use another WLED effect first to test the LED strip itself.
@@ -352,6 +353,9 @@ Right camera: Connected, sequence <increasing value>, frames <increasing value>
 
 Both sequence and frame counters must increase on each refresh. A connected
 camera with a frozen or zero frame counter has a live SPI link but no usable RGB.
+The JSON status also reports `ageMs` since the last accepted RGB frame and
+`rgbMax`, its brightest received channel (0 means entirely black). An `ageMs`
+value of 4294967295 means no RGB frame has been accepted in this session.
 
 The same data is available as JSON. Replace the address with the WLED IP:
 

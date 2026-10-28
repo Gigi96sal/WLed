@@ -183,12 +183,71 @@ static void testSpiReturnsAndFailureCleanup() {
   master.end();
 }
 
+// Model a 17 ms 1 MHz transfer: provenance expires at completion, while a valid
+// frame gets its full 150 ms display hold after reception, independently per camera.
+static void testSlowSpiDisplayHold() {
+  wled::CinemaController controller;
+  start(controller);
+  cinemaTest::nowMillis = 10016;
+  controller.service(millis());
+  uint32_t reference = 1;
+  uint32_t sequence = 100;
+  cinemaTest::exchange = [&](bool left, spi_transaction_t* transaction) {
+    protocol::PacketHeader packet;
+    packet.type = left ? protocol::MessageType::FrameRgb : protocol::MessageType::Heartbeat;
+    packet.source = left ? protocol::NodeRole::CameraLeft : protocol::NodeRole::CameraRight;
+    packet.target = protocol::NodeRole::Controller;
+    packet.bootId = left ? 42 : 43;
+    packet.sequence = ++sequence;
+    uint8_t payload[protocol::FRAME_RGB_HEADER_SIZE + 3];
+    size_t payloadSize = 0;
+    if (left) {
+      protocol::FrameRgbHeader frame;
+      frame.configGeneration = 7;
+      frame.frameId = sequence;
+      frame.slotCount = 1;
+      frame.controllerBootId = controller._spiMaster.controllerBootId();
+      frame.pollSequence = reference;
+      const uint8_t colors[] = {255, 0, 0};
+      assert(protocol::encodeFrameRgbPayload(frame, colors, sizeof(colors), payload, sizeof(payload), &payloadSize) == protocol::PacketStatus::Ok);
+      cinemaTest::nowMillis += 17;
+    }
+    uint8_t encoded[protocol::MAX_PACKET_SIZE];
+    size_t size = 0;
+    assert(protocol::encodePacket(packet, payload, payloadSize, encoded, sizeof(encoded), &size) == protocol::PacketStatus::Ok);
+    assert(spi::encodeSlot(encoded, size, 0, sequence, static_cast<uint8_t*>(transaction->rx_buffer), spi::SLOT_SIZE) == spi::SlotStatus::Ok);
+  };
+  cinemaTest::nowMillis = 10130;
+  controller.service(millis());
+  assert(controller.cameraStatus(wled::CameraSide::Left).framesReceived == 1);
+  assert(controller.cameraStatus(wled::CameraSide::Left).maxChannel == 255);
+  assert(controller.frameAgeMillis(wled::CameraSide::Right, millis()) == UINT32_MAX);
+  Segment segment;
+  cinemaTest::nowMillis = 10151;
+  assert(controller.render(segment) && segment.pixels[0] == 0xFF0000 && segment.pixels[1] == 0);
+  assert(controller.frameAgeMillis(wled::CameraSide::Left, millis()) == 4);
+  cinemaTest::nowMillis = 10163;
+  controller.service(millis());
+  reference = 3; // Previous left request was sent at 10130.
+  cinemaTest::nowMillis = 10270; // 140 ms before SPI; 157 ms after its completion.
+  controller.service(millis());
+  assert(controller.isCameraConnected(wled::CameraSide::Left, millis()));
+  assert(controller.cameraStatus(wled::CameraSide::Left).framesReceived == 1);
+  cinemaTest::nowMillis = 10297;
+  assert(controller.render(segment) && segment.pixels[0] == 0xFF0000);
+  cinemaTest::nowMillis++;
+  assert(controller.render(segment) && segment.pixels[0] == 0);
+  cinemaTest::exchange = {};
+  controller._spiMaster.end();
+}
+
 int main() {
   testUptimeAndTimeout();
   testSmoothingAndCameraIsolation();
   testCameraRebootAndOrdering();
   testConfigDuringSpiInitialization();
   testSpiReturnsAndFailureCleanup();
+  testSlowSpiDisplayHold();
   assert(cinemaTest::liveAllocations == 0 && !cinemaTest::busActive);
   assert(std::none_of(cinemaTest::ownedPins.begin(), cinemaTest::ownedPins.end(), [](bool owned) { return owned; }));
   std::cout << "Cinema regression checks passed: uptime, timeout, smoothing, config handoff, MISO isolation, resource cleanup.\n";
