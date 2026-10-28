@@ -64,6 +64,16 @@ static void testUptimeAndTimeout() {
   assert(segment.pixels[0] == 0xFF0000);
   cinemaTest::nowMillis++;
   controller.render(segment);
+  assert(segment.pixels[0] > 0 && segment.pixels[0] < 0xFF0000);
+  cinemaTest::nowMillis = 10275;
+  controller.render(segment);
+  assert(segment.pixels[0] == 0x800000); // Halfway through the 250 ms fade.
+  for (int i = 0; i < 100; i++) {
+    controller.render(segment);
+    assert(segment.pixels[0] == 0x800000); // Extra renders cannot accelerate the time-based fade.
+  }
+  cinemaTest::nowMillis = 10400;
+  controller.render(segment);
   assert(segment.pixels[0] == 0);
   // Unsigned uptime arithmetic must also survive the 32-bit millis rollover.
   cinemaTest::nowMillis = UINT32_MAX - 20;
@@ -93,10 +103,14 @@ static void testSmoothingAndCameraIsolation() {
     assert(sendFrame(controller, 11, 11, 255, protocol::NodeRole::CameraRight, 43));
     cinemaTest::nowMillis += 51;
     controller.render(segment);
+    assert(segment.pixels[0] > 0 && segment.pixels[1] > 0);
+    cinemaTest::nowMillis += wled::CAMERA_FRAME_FADE_MS;
+    assert(sendFrame(controller, 12, 12, 255, protocol::NodeRole::CameraRight, 43));
+    controller.render(segment);
     assert(segment.pixels[0] == 0 && segment.pixels[1] > 0);
     assert(controller._smoothedPixels[0] == 0);
     // A healthy camera reporting black must converge too, without relying on a timeout.
-    assert(sendFrame(controller, 12, 12, 0, protocol::NodeRole::CameraRight, 43));
+    assert(sendFrame(controller, 13, 13, 0, protocol::NodeRole::CameraRight, 43));
     for (int i = 0; i < 10000; i++) controller.render(segment);
     assert(segment.pixels[1] == 0);
     controller._spiMaster.end();
@@ -229,15 +243,31 @@ static void testSlowSpiDisplayHold() {
   assert(controller.frameAgeMillis(wled::CameraSide::Left, millis()) == 4);
   cinemaTest::nowMillis = 10163;
   controller.service(millis());
-  reference = 3; // Previous left request was sent at 10130.
-  cinemaTest::nowMillis = 10270; // 140 ms before SPI; 157 ms after its completion.
+  cinemaTest::nowMillis = 10179; // Continuous polling; delayed capture still references the first command.
   controller.service(millis());
-  assert(controller.isCameraConnected(wled::CameraSide::Left, millis()));
-  assert(controller.cameraStatus(wled::CameraSide::Left).framesReceived == 1);
-  assert(controller.rgbRequestAgeMillis(wled::CameraSide::Left) == 157);
-  cinemaTest::nowMillis = 10297;
+  assert(controller.cameraStatus(wled::CameraSide::Left).framesReceived == 2);
+  assert(controller.rgbRequestAgeMillis(wled::CameraSide::Left) == 196);
+  cinemaTest::nowMillis = 10210;
+  controller.service(millis());
+  cinemaTest::nowMillis = 10305; // Polling remains live, but the old reference exceeds the 300 ms bound.
+  controller.service(millis());
+  assert(controller.rgbRequestAgeMillis(wled::CameraSide::Left) == 322);
+  assert(controller.cameraStatus(wled::CameraSide::Left).framesReceived == 2);
+  cinemaTest::nowMillis = 10338;
+  controller.service(millis());
+  cinemaTest::nowMillis = 10346;
   assert(controller.render(segment) && segment.pixels[0] == 0xFF0000);
   cinemaTest::nowMillis++;
+  assert(controller.render(segment) && segment.pixels[0] > 0 && segment.pixels[0] < 0xFF0000);
+  reference = 7; // Last left poll was sent at 10305; this reference itself is within 300 ms.
+  cinemaTest::nowMillis = 10439; // The 17 ms transfer takes the per-camera polling gap past 150 ms.
+  controller.service(millis());
+  assert(controller.isCameraConnected(wled::CameraSide::Left, millis()));
+  assert(controller.cameraStatus(wled::CameraSide::Left).framesReceived == 2);
+  assert(controller.rgbRequestAgeMillis(wled::CameraSide::Left) == 151);
+  assert(controller.frameAgeMillis(wled::CameraSide::Left, millis()) == 260);
+  assert(controller.render(segment) && segment.pixels[0] > 0 && segment.pixels[0] < 0xFF0000);
+  cinemaTest::nowMillis = 10596;
   assert(controller.render(segment) && segment.pixels[0] == 0);
   cinemaTest::exchange = {};
   controller._spiMaster.end();

@@ -136,19 +136,28 @@ bool CinemaController::acceptFrame(const protocol::PacketView& packet, uint32_t 
   return true;
 }
 
+// Apply a time-based fade to the last valid frame without compounding its color-filter history.
+static uint16_t frameScale(uint32_t ageMillis) {
+  if (ageMillis <= CAMERA_FRAME_HOLD_MS) return 256;
+  const uint32_t fadeMillis = ageMillis - CAMERA_FRAME_HOLD_MS;
+  if (fadeMillis >= CAMERA_FRAME_FADE_MS) return 0;
+  return static_cast<uint16_t>(((CAMERA_FRAME_FADE_MS - fadeMillis) * 256 + CAMERA_FRAME_FADE_MS / 2) / CAMERA_FRAME_FADE_MS);
+}
+
 bool CinemaController::render(Segment& segment) {
   if (!_config.isValidForSegment(segment.virtualLength())) return false;
   // Frame arrivals use uptime, independently of WLED's resettable/synchronized effect clock.
   const uint32_t nowMillis = millis();
-  const bool leftFresh = hasFreshFrame(CameraSide::Left, nowMillis);
-  const bool rightFresh = hasFreshFrame(CameraSide::Right, nowMillis);
+  const uint16_t leftScale = frameScale(frameAgeMillis(CameraSide::Left, nowMillis));
+  const uint16_t rightScale = frameScale(frameAgeMillis(CameraSide::Right, nowMillis));
 
   for (uint16_t canonicalSlot = 0; canonicalSlot < _config.totalLeds(); canonicalSlot++) {
     const CameraSide side = ownerForCanonicalSlot(canonicalSlot);
     const PixelStorage& pixels = pixelsForSide(side);
     const size_t offset = static_cast<size_t>(canonicalSlot) * 3;
-    if (!(side == CameraSide::Left ? leftFresh : rightFresh)) {
-      // A missing camera must go fully dark even at the highest smoothing setting.
+    const uint16_t scale = side == CameraSide::Left ? leftScale : rightScale;
+    if (scale == 0) {
+      // After the fade, a missing camera stays fully dark even at the highest smoothing setting.
       _smoothedPixels[offset] = _smoothedPixels[offset + 1] = _smoothedPixels[offset + 2] = 0;
       segment.setPixelColor(physicalIndexForCanonicalSlot(canonicalSlot), 0);
       continue;
@@ -157,6 +166,9 @@ bool CinemaController::render(Segment& segment) {
     uint8_t green = pixels[offset + 1];
     uint8_t blue = pixels[offset + 2];
     correctColor(canonicalSlot, &red, &green, &blue);
+    red = (static_cast<uint16_t>(red) * scale + 128) >> 8;
+    green = (static_cast<uint16_t>(green) * scale + 128) >> 8;
+    blue = (static_cast<uint16_t>(blue) * scale + 128) >> 8;
     const uint32_t color = RGBW32(red, green, blue, 0);
     segment.setPixelColor(physicalIndexForCanonicalSlot(canonicalSlot), color);
   }
@@ -185,10 +197,6 @@ uint16_t CinemaController::physicalIndexForCanonicalSlot(uint16_t canonicalSlot)
 
   if (_config.clockwise) return static_cast<uint16_t>((canonicalSlot + total - origin) % total);
   return static_cast<uint16_t>((origin + total - canonicalSlot) % total);
-}
-
-bool CinemaController::hasFreshFrame(CameraSide side, uint32_t nowMillis) const {
-  return frameAgeMillis(side, nowMillis) <= CAMERA_FRAME_TIMEOUT_MS;
 }
 
 // UINT32_MAX identifies a side that has not received an accepted RGB frame in this session.

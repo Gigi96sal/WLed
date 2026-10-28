@@ -36,11 +36,15 @@ the configured strip origin and direction afterward.
 
 Frames carry the actual sensor capture timestamp and reference a preceding
 configuration poll. The master accepts only references from its current session
-and the last 150 ms, checked after the SPI transfer finishes. This rejects stale
-queued responses after an interruption. Each accepted frame then stays available
-for 150 ms from reception; capture/transport latency does not consume this display
-hold time. Missing frames turn only that camera's portion black. Heartbeats maintain link status
-while the sensor is not producing valid RGB; check increasing frame counters too.
+and the last 300 ms, checked after the SPI transfer finishes, allowing for capture
+and the queued full-duplex response. The preceding poll for that camera must also
+be within 150 ms, so a polling interruption cannot revive a pending old response.
+The camera still rejects captures older than 150 ms before publication. Each
+accepted frame is held for 150 ms from reception, then fades to black over 250 ms.
+Capture/transport latency does not consume the display hold. The time-based fade
+avoids black flashes when the next sensor frame is slightly late and affects only
+the missing camera's portion. Heartbeats maintain link status while the sensor is
+not producing valid RGB; check increasing frame counters too.
 
 Use another WLED effect first to test the LED strip itself.
 

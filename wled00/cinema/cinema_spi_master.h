@@ -16,6 +16,9 @@ constexpr uint32_t MIN_SPI_FREQUENCY_HZ = 1000000;
 constexpr uint32_t DEFAULT_SPI_FREQUENCY_HZ = 4000000;
 constexpr uint32_t MAX_SPI_FREQUENCY_HZ = 10000000;
 constexpr uint32_t SPI_POLL_INTERVAL_MS = 16;
+// Full-duplex RGB spans capture and a later DMA transaction. Keep its bounded
+// provenance allowance separate from the 150 ms polling-pause detector.
+constexpr uint32_t MAX_RGB_REQUEST_AGE_MS = 2 * stream::FRAME_TIMEOUT_MS;
 
 #if defined(CONFIG_IDF_TARGET_ESP32)
 constexpr int8_t DEFAULT_SPI_SCLK_PIN = 18;

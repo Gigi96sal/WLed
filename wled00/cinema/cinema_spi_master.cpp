@@ -196,6 +196,7 @@ bool CinemaSpiMaster::poll(protocol::PacketView* packet, protocol::NodeRole* exp
     return false;
   }
   // MOSI can be intact even when the return slot is corrupt or the camera has no frame yet.
+  const PollRecord previousRequest = _requests[side][(_nextRequest[side] + stream::REQUEST_HISTORY_SIZE - 1) % stream::REQUEST_HISTORY_SIZE];
   _requests[side][_nextRequest[side]] = {_slotSequence, nowMillis, true};
   _nextRequest[side] = (_nextRequest[side] + 1) % stream::REQUEST_HISTORY_SIZE;
   const uint32_t receivedMillis = millis();
@@ -219,7 +220,9 @@ bool CinemaSpiMaster::poll(protocol::PacketView* packet, protocol::NodeRole* exp
       for (const auto& request : _requests[side]) {
         if (request.valid && request.sequence == frame.header.pollSequence) {
           _rgbRequestAgeMillis[side] = static_cast<uint32_t>(receivedMillis - request.sentMillis);
-          fresh = _rgbRequestAgeMillis[side] <= stream::FRAME_TIMEOUT_MS;
+          fresh = previousRequest.valid
+              && static_cast<uint32_t>(receivedMillis - previousRequest.sentMillis) <= stream::FRAME_TIMEOUT_MS
+              && _rgbRequestAgeMillis[side] <= MAX_RGB_REQUEST_AGE_MS;
           break;
         }
       }
