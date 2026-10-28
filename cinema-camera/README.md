@@ -356,6 +356,8 @@ camera with a frozen or zero frame counter has a live SPI link but no usable RGB
 The JSON status also reports `ageMs` since the last accepted RGB frame and
 `rgbMax`, its brightest received channel (0 means entirely black). An `ageMs`
 value of 4294967295 means no RGB frame has been accepted in this session.
+`requestAgeMs` reports the latest RGB response's configuration-poll age even when
+it was rejected as stale; 4294967295 means no matching current-session poll.
 
 The same data is available as JSON. Replace the address with the WLED IP:
 

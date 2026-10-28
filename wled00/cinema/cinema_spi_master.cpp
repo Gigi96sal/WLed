@@ -142,6 +142,7 @@ void CinemaSpiMaster::end() {
   _slotSequence = 0;
   _controllerBootId = 0;
   _frameIsFresh = false;
+  _rgbRequestAgeMillis[0] = _rgbRequestAgeMillis[1] = UINT32_MAX;
   _previewRole = protocol::NodeRole::Unspecified;
   _previewId = _previewOffset = 0;
   for (auto& side : _requests) for (auto& request : side) request = PollRecord();
@@ -211,13 +212,14 @@ bool CinemaSpiMaster::poll(protocol::PacketView* packet, protocol::NodeRole* exp
   // a stopped master must never make a camera's old DMA slot look like a newly captured frame.
   bool fresh = slot.packet.header.type != protocol::MessageType::FrameRgb;
   if (!fresh) {
+    _rgbRequestAgeMillis[side] = UINT32_MAX;
     protocol::FrameRgbView frame;
     if (protocol::decodeFrameRgbPayload(slot.packet.payload, slot.packet.payloadSize, &frame) == protocol::PacketStatus::Ok
         && frame.header.controllerBootId == _controllerBootId && frame.header.pollSequence != _slotSequence) {
       for (const auto& request : _requests[side]) {
-        if (request.valid && request.sequence == frame.header.pollSequence
-            && static_cast<uint32_t>(receivedMillis - request.sentMillis) <= stream::FRAME_TIMEOUT_MS) {
-          fresh = true;
+        if (request.valid && request.sequence == frame.header.pollSequence) {
+          _rgbRequestAgeMillis[side] = static_cast<uint32_t>(receivedMillis - request.sentMillis);
+          fresh = _rgbRequestAgeMillis[side] <= stream::FRAME_TIMEOUT_MS;
           break;
         }
       }

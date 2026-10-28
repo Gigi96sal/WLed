@@ -221,6 +221,7 @@ static void testSlowSpiDisplayHold() {
   controller.service(millis());
   assert(controller.cameraStatus(wled::CameraSide::Left).framesReceived == 1);
   assert(controller.cameraStatus(wled::CameraSide::Left).maxChannel == 255);
+  assert(controller.rgbRequestAgeMillis(wled::CameraSide::Left) == 147);
   assert(controller.frameAgeMillis(wled::CameraSide::Right, millis()) == UINT32_MAX);
   Segment segment;
   cinemaTest::nowMillis = 10151;
@@ -233,6 +234,7 @@ static void testSlowSpiDisplayHold() {
   controller.service(millis());
   assert(controller.isCameraConnected(wled::CameraSide::Left, millis()));
   assert(controller.cameraStatus(wled::CameraSide::Left).framesReceived == 1);
+  assert(controller.rgbRequestAgeMillis(wled::CameraSide::Left) == 157);
   cinemaTest::nowMillis = 10297;
   assert(controller.render(segment) && segment.pixels[0] == 0xFF0000);
   cinemaTest::nowMillis++;

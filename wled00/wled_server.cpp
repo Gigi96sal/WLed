@@ -482,13 +482,13 @@ void initServer()
     const cinema::wled::CameraRuntimeStatus& left = cinemaController.cameraStatus(cinema::wled::CameraSide::Left);
     const cinema::wled::CameraRuntimeStatus& right = cinemaController.cameraStatus(cinema::wled::CameraSide::Right);
     AsyncResponseStream* response = request->beginResponseStream(FPSTR(CONTENT_TYPE_JSON));
-    response->printf_P(PSTR("{\"transport\":%u,\"spi\":{\"leftPolls\":%u,\"rightPolls\":%u,\"validSlots\":%u,\"slotErrors\":%u,\"transferErrors\":%u},\"left\":{\"connected\":%s,\"boot\":%u,\"sequence\":%u,\"frame\":%u,\"frames\":%u,\"ageMs\":%u,\"rgbMax\":%u},\"right\":{\"connected\":%s,\"boot\":%u,\"sequence\":%u,\"frame\":%u,\"frames\":%u,\"ageMs\":%u,\"rgbMax\":%u}}"),
+    response->printf_P(PSTR("{\"transport\":%u,\"spi\":{\"leftPolls\":%u,\"rightPolls\":%u,\"validSlots\":%u,\"slotErrors\":%u,\"transferErrors\":%u},\"left\":{\"connected\":%s,\"boot\":%u,\"sequence\":%u,\"frame\":%u,\"frames\":%u,\"ageMs\":%u,\"rgbMax\":%u,\"requestAgeMs\":%u},\"right\":{\"connected\":%s,\"boot\":%u,\"sequence\":%u,\"frame\":%u,\"frames\":%u,\"ageMs\":%u,\"rgbMax\":%u,\"requestAgeMs\":%u}}"),
       static_cast<unsigned>(cinemaController.transportStatus()),
       cinemaController.leftPolls(), cinemaController.rightPolls(), cinemaController.validSlots(), cinemaController.slotErrors(), cinemaController.transferErrors(),
       cinemaController.isCameraConnected(cinema::wled::CameraSide::Left, nowMillis) ? "true" : "false", left.bootId, left.lastSequence, left.lastFrameId, left.framesReceived,
-      cinemaController.frameAgeMillis(cinema::wled::CameraSide::Left, millis()), static_cast<unsigned>(left.maxChannel),
+      cinemaController.frameAgeMillis(cinema::wled::CameraSide::Left, millis()), static_cast<unsigned>(left.maxChannel), cinemaController.rgbRequestAgeMillis(cinema::wled::CameraSide::Left),
       cinemaController.isCameraConnected(cinema::wled::CameraSide::Right, nowMillis) ? "true" : "false", right.bootId, right.lastSequence, right.lastFrameId, right.framesReceived,
-      cinemaController.frameAgeMillis(cinema::wled::CameraSide::Right, millis()), static_cast<unsigned>(right.maxChannel));
+      cinemaController.frameAgeMillis(cinema::wled::CameraSide::Right, millis()), static_cast<unsigned>(right.maxChannel), cinemaController.rgbRequestAgeMillis(cinema::wled::CameraSide::Right));
     request->send(response);
   });
 

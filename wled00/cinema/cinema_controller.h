@@ -105,6 +105,7 @@ class CinemaController {
     uint16_t physicalIndexForCanonicalSlot(uint16_t canonicalSlot) const;
     bool hasFreshFrame(CameraSide side, uint32_t nowMillis) const;
     uint32_t frameAgeMillis(CameraSide side, uint32_t nowMillis) const;
+    uint32_t rgbRequestAgeMillis(CameraSide side) const { return _spiMaster.rgbRequestAgeMillis(side == CameraSide::Left); }
     CinemaPreview& preview() { return _preview; }
 
   private:

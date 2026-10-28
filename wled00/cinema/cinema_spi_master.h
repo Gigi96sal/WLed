@@ -70,6 +70,7 @@ class CinemaSpiMaster {
     uint32_t slotErrors() const { return _slotErrors; }
     uint32_t transferErrors() const { return _transferErrors; }
     bool frameIsFresh() const { return _frameIsFresh; }
+    uint32_t rgbRequestAgeMillis(bool left) const { return _rgbRequestAgeMillis[left ? 0 : 1]; }
     uint32_t controllerBootId() const { return _controllerBootId; }
     void setPreviewRequest(protocol::NodeRole role, uint32_t id, uint16_t offset) { _previewRole = role; _previewId = id; _previewOffset = offset; }
 
@@ -88,6 +89,7 @@ class CinemaSpiMaster {
     uint8_t _nextRequest[2]{};
     uint32_t _controllerBootId = 0;
     bool _frameIsFresh = false;
+    uint32_t _rgbRequestAgeMillis[2]{UINT32_MAX, UINT32_MAX};
     protocol::NodeRole _previewRole = protocol::NodeRole::Unspecified;
     uint32_t _previewId = 0;
     uint16_t _previewOffset = 0;
