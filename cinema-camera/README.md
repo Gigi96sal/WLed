@@ -107,6 +107,14 @@ by the page, WLED and camera firmware. They use the same OV2640 controls as
 The decoder handles RGB/BGR ordering explicitly; arbitrary image effects are not
 applied to the sampled colors.
 
+If a white test screen stays dark, try **Auto exposure off**, **Manual exposure 600**,
+**Auto gain off**, **Manual gain 1**, and **White balance Sunny**, keeping brightness,
+contrast and saturation at 0. This profile made the same white patch readable in
+the tested OV2640 installation while retaining about 26 RGB updates/second. Exposure
+values are sensor register units, not milliseconds. Tune each camera against its
+screen: keep white below clipping, then check red/green/blue and black. A fixed
+profile also avoids automatic exposure changes between bright and dark scenes.
+
 ESP32-CAM-MB users can connect one isolated camera by USB and let PlatformIO reset
 it automatically. The camera firmware has no Wi-Fi OTA; never connect its SPI bus
 or an independent supply while programming it from USB. An initial serial JPEG
