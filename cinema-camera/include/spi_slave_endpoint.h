@@ -60,6 +60,7 @@ class SpiSlaveEndpoint {
     uint8_t* _previewPixels = nullptr;
     uint32_t _previewId = 0;
     uint32_t _previewControllerBootId = 0;
+    uint16_t _previewSize = 0, _previewWidth = 0, _previewHeight = 0;
     bool _previewTurn = false;
     bool _initialized = false;
 };

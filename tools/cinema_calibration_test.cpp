@@ -77,10 +77,13 @@ static void testPhotoTransport() {
   controller.preview().service(time - 1); // The HTTP task can publish a request after the loop sampled time.
   assert(controller.preview().info(&info) && info.state == wled::PreviewState::Capturing);
   assert(!controller.preview().request(NodeRole::CameraRight, time, &info));
-  std::vector<uint8_t> image(preview::IMAGE_SIZE);
-  for (size_t i = 0; i < image.size(); i++) image[i] = (i * 37 + 91) % 256;
+  // Synthetic SOF fixture tests framing/bounds, not JPEG pixel decoding.
+  std::vector<uint8_t> image(preview::MAX_IMAGE_SIZE - 13, 0);
+  const uint8_t header[] = {0xFF,0xD8,0xFF,0xC0,0,17,8,1,0xE0,2,0x80,3,1,0x11,0,2,0x11,0,3,0x11,0};
+  memcpy(image.data(), header, sizeof(header));
+  image[image.size()-2] = 0xFF; image.back() = 0xD9;
   bool published = false;
-  for (unsigned iteration = 0; iteration < 200; iteration++) {
+  for (unsigned iteration = 0; iteration < 600; iteration++) {
     poll();
     for (auto endpoint : {&left, &right}) {
       stream::CaptureRequest current;
@@ -104,17 +107,17 @@ static void testPhotoTransport() {
     assert(controller.preview().info(&info));
     if (info.state == wled::PreviewState::Ready) break;
   }
-  assert(info.state == wled::PreviewState::Ready && info.received == preview::IMAGE_SIZE);
+  assert(info.state == wled::PreviewState::Ready && info.received == image.size() && info.size == image.size());
   assert(controller.cameraStatus(wled::CameraSide::Left).framesReceived > 10);
   assert(controller.cameraStatus(wled::CameraSide::Right).framesReceived > 10);
   uint8_t chunk[preview::CHUNK_SIZE]; size_t size = 0;
-  for (uint16_t offset = 0; offset < preview::IMAGE_SIZE; offset += preview::CHUNK_SIZE) {
-    assert(controller.preview().read(info.id, offset, chunk, &size) && size == preview::CHUNK_SIZE);
+  for (uint16_t offset = 0; offset < image.size(); offset += preview::CHUNK_SIZE) {
+    assert(controller.preview().read(info.id, offset, chunk, &size) && size == std::min<size_t>(preview::CHUNK_SIZE, image.size() - offset));
     assert(memcmp(chunk, image.data() + offset, size) == 0);
   }
   assert(!controller.preview().read(info.id + 1, 0, chunk, &size));
   assert(!controller.preview().read(info.id, 1, chunk, &size));
-  assert(!controller.preview().read(info.id, preview::IMAGE_SIZE, chunk, &size));
+  assert(!controller.preview().read(info.id, preview::MAX_IMAGE_SIZE, chunk, &size));
   const uint32_t firstId = info.id;
   std::atomic<bool> readerStarted{false};
   std::thread reader([&] {
@@ -136,16 +139,23 @@ static void testPhotoTransport() {
   const uint32_t id = info.id;
   uint8_t payload[preview::HEADER_SIZE + preview::CHUNK_SIZE]{};
   protocol::writeU32Le(payload, id); protocol::writeU32Le(payload + 4, 42);
-  protocol::writeU16Le(payload + 10, preview::CHUNK_SIZE);
+  protocol::writeU32Le(payload + 8, image.size());
+  protocol::writeU16Le(payload + 12, preview::WIDTH); protocol::writeU16Le(payload + 14, preview::HEIGHT);
   protocol::PacketView packet;
-  packet.header.type = protocol::MessageType::SnapshotChunk;
+  packet.header.type = protocol::MessageType::SnapshotBegin;
   packet.header.source = NodeRole::CameraRight; packet.header.target = NodeRole::Controller; packet.header.bootId = 100;
-  packet.payload = payload; packet.payloadSize = sizeof(payload);
+  packet.payload = payload; packet.payloadSize = preview::METADATA_SIZE;
   assert(!controller.preview().accept(packet, 42)); // Wrong physical camera/role.
   packet.header.source = NodeRole::CameraLeft;
   assert(!controller.preview().accept(packet, 43)); // Old controller session.
   assert(controller.preview().accept(packet, 42));
-  assert(!controller.preview().accept(packet, 42)); // Repeated chunk cannot advance twice.
+  assert(controller.preview().accept(packet, 42)); // Duplicate metadata cannot reset progress.
+  packet.header.type = protocol::MessageType::SnapshotChunk;
+  packet.payloadSize = sizeof(payload);
+  protocol::writeU16Le(payload + 8, 0); protocol::writeU16Le(payload + 10, preview::CHUNK_SIZE);
+  memcpy(payload + preview::HEADER_SIZE, image.data(), preview::CHUNK_SIZE);
+  assert(controller.preview().accept(packet, 42));
+  assert(!controller.preview().accept(packet, 42)); // Duplicate chunk cannot advance twice.
   protocol::writeU16Le(payload + 8, preview::CHUNK_SIZE);
   packet.header.bootId++;
   assert(!controller.preview().accept(packet, 42));

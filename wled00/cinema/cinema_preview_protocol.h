@@ -6,53 +6,73 @@
 namespace cinema {
 namespace preview {
 
-constexpr uint16_t WIDTH = 128;
-constexpr uint16_t HEIGHT = 96;
-constexpr uint16_t IMAGE_SIZE = WIDTH * HEIGHT * 2;
+constexpr uint16_t WIDTH = 640, HEIGHT = 480;
+constexpr uint16_t MAX_IMAGE_SIZE = 48 * 1024;
 constexpr uint16_t CHUNK_SIZE = 1024;
-constexpr size_t HEADER_SIZE = 12;
-constexpr uint32_t CAPTURE_TIMEOUT_MS = 12000;
-constexpr uint32_t RETENTION_MS = 30000;
+constexpr uint16_t METADATA_REQUEST = UINT16_MAX;
+constexpr size_t HEADER_SIZE = 12, METADATA_SIZE = 16;
+constexpr uint32_t CAPTURE_TIMEOUT_MS = 16000, RETENTION_MS = 60000;
 
+struct Metadata {
+  uint32_t id = 0, controllerBootId = 0, size = 0;
+  uint16_t width = 0, height = 0;
+};
 struct Chunk {
-  uint32_t id = 0;
-  uint32_t controllerBootId = 0;
-  uint16_t offset = 0;
-  uint16_t size = 0;
+  uint32_t id = 0, controllerBootId = 0;
+  uint16_t offset = 0, size = 0;
   const uint8_t* data = nullptr;
 };
 
-// Only fixed RGB565 thumbnail chunks are accepted; the packet CRC protects each chunk and its offset.
+// Metadata precedes the bounded variable-length JPEG. Zero size reports capture failure.
+inline bool decodeMetadata(const uint8_t* in, size_t size, Metadata* result) {
+  if (!in || !result || size != METADATA_SIZE) return false;
+  Metadata m{protocol::readU32Le(in), protocol::readU32Le(in + 4), protocol::readU32Le(in + 8),
+             protocol::readU16Le(in + 12), protocol::readU16Le(in + 14)};
+  if (!m.id || !m.controllerBootId || m.size > MAX_IMAGE_SIZE) return false;
+  if (m.size == 0) {
+    if (m.width || m.height) return false;
+  } else if (!m.width || !m.height || m.width > WIDTH || m.height > HEIGHT) return false;
+  *result = m;
+  return true;
+}
+
+// The final chunk may be short; the receiver also checks the declared image length.
 inline bool decodeChunk(const uint8_t* payload, size_t size, Chunk* chunk) {
   if (!payload || !chunk || size <= HEADER_SIZE || size > HEADER_SIZE + CHUNK_SIZE) return false;
-  Chunk decoded;
-  decoded.id = protocol::readU32Le(payload);
-  decoded.controllerBootId = protocol::readU32Le(payload + 4);
-  decoded.offset = protocol::readU16Le(payload + 8);
-  decoded.size = protocol::readU16Le(payload + 10);
-  if (decoded.id == 0 || decoded.controllerBootId == 0 || decoded.offset >= IMAGE_SIZE || decoded.offset % CHUNK_SIZE != 0
-      || decoded.size != CHUNK_SIZE || size != HEADER_SIZE + decoded.size) return false;
-  decoded.data = payload + HEADER_SIZE;
-  *chunk = decoded;
+  Chunk c{protocol::readU32Le(payload), protocol::readU32Le(payload + 4), protocol::readU16Le(payload + 8),
+          protocol::readU16Le(payload + 10), payload + HEADER_SIZE};
+  if (!c.id || !c.controllerBootId || c.offset >= MAX_IMAGE_SIZE || c.offset % CHUNK_SIZE
+      || !c.size || c.size > CHUNK_SIZE || size != HEADER_SIZE + c.size) return false;
+  *chunk = c;
   return true;
 }
 
-// Creates an upright sensor thumbnail without applying calibration, so users can see the source corners.
-inline bool makeImage(const uint8_t* source, size_t length, size_t width, size_t height, uint8_t* output) {
-  if (!source || !output || width == 0 || height == 0 || width > UINT16_MAX || height > UINT16_MAX
-      || height > SIZE_MAX / 2 / width || length < width * height * 2) return false;
-  for (size_t y = 0; y < HEIGHT; y++) for (size_t x = 0; x < WIDTH; x++) {
-    const size_t sourceX = x * (width - 1) / (WIDTH - 1);
-    const size_t sourceY = y * (height - 1) / (HEIGHT - 1);
-    const size_t input = (sourceY * width + sourceX) * 2;
-    const size_t destination = (y * WIDTH + x) * 2;
-    output[destination] = source[input];
-    output[destination + 1] = source[input + 1];
+// Check baseline dimensions before calling the Espressif decoder and before
+// exposing a complete photo. Marker lengths are bounded before every indexed access.
+inline bool jpegDimensions(const uint8_t* image, size_t size, uint16_t* width, uint16_t* height) {
+  if (!image || !width || !height || size < 4 || image[0] != 0xFF || image[1] != 0xD8
+      || image[size - 2] != 0xFF || image[size - 1] != 0xD9) return false;
+  size_t offset = 2;
+  while (offset + 4 <= size) {
+    if (image[offset++] != 0xFF) return false;
+    while (offset < size && image[offset] == 0xFF) offset++;
+    if (offset >= size) return false;
+    const uint8_t marker = image[offset++];
+    if (marker == 0xDA || marker == 0xD9 || marker == 0 || marker == 0xD8 || (marker >= 0xD0 && marker <= 0xD7)) return false;
+    if (size - offset < 2) return false;
+    const size_t length = (static_cast<size_t>(image[offset]) << 8) | image[offset + 1];
+    if (length < 2 || length > size - offset) return false;
+    if (marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC) {
+      if (marker != 0xC0 || length != 17 || image[offset + 2] != 8 || image[offset + 7] != 3) return false;
+      *height = (static_cast<uint16_t>(image[offset + 3]) << 8) | image[offset + 4];
+      *width = (static_cast<uint16_t>(image[offset + 5]) << 8) | image[offset + 6];
+      return *width > 0 && *height > 0 && *width <= WIDTH && *height <= HEIGHT;
+    }
+    offset += length;
   }
-  return true;
+  return false;
 }
 
-static_assert(IMAGE_SIZE % CHUNK_SIZE == 0, "Preview uses whole fixed-size chunks.");
 } // namespace preview
 } // namespace cinema
 // AI: end

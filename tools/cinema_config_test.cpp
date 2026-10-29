@@ -13,13 +13,26 @@ int main() {
   JsonObject root = document.to<JsonObject>();
   serializeCinemaConfig(root);
   JsonObject settings = root["cinema"];
-  assert(settings["v"].as<unsigned>() == 5);
+  assert(settings["v"].as<unsigned>() == 6);
   assert(settings["spi"]["misor"].as<int>() == 21);
   settings["on"] = true;
   settings["gen"] = 7;
   settings["top"] = 2;
   assert(deserializeCinemaConfig(root, false));
   assert(cinemaController.config().enabled);
+  settings["camera"]["left"]["saturation"] = 2;
+  assert(deserializeCinemaConfig(root, false));
+  assert(cinemaController.config().leftCamera.saturation == 2);
+  settings["camera"]["left"]["saturation"] = 2.5;
+  settings["gen"] = 8;
+  deserializeCinemaConfig(root, false);
+  assert(cinemaController.config().generation == 7);
+  settings["camera"]["left"]["saturation"] = 2;
+  settings["camera"]["right"]["quality"] = 0;
+  deserializeCinemaConfig(root, false);
+  assert(cinemaController.config().generation == 7);
+  settings["camera"]["right"]["quality"] = 12;
+  settings["gen"] = 7;
   // Persist the projective corners exactly, and reject malformed geometry before changing generation.
   settings["cal"]["left"][0][0] = 1000;
   assert(deserializeCinemaConfig(root, false));
@@ -52,7 +65,7 @@ int main() {
   document.clear();
   root = document.to<JsonObject>();
   serializeCinemaConfig(root);
-  assert(root["cinema"]["v"].as<unsigned>() == 5);
+  assert(root["cinema"]["v"].as<unsigned>() == 6);
   assert(root["cinema"]["spi"]["misor"].as<int>() == -1);
   // Schema 4 preserves its working wiring and enabled state, with identity calibration on migration.
   root["cinema"]["v"] = 4;
@@ -63,5 +76,13 @@ int main() {
   assert(!deserializeCinemaConfig(root, true));
   assert(cinemaController.config().enabled);
   assert(cinemaController.config().leftCalibration == cinema::geometry::Quad());
+  root["cinema"]["v"] = 5;
+  root["cinema"]["cal"].clear();
+  serializeCinemaConfig(root);
+  root["cinema"]["v"] = 5;
+  root["cinema"].remove("camera");
+  assert(!deserializeCinemaConfig(root, true));
+  assert(cinemaController.config().leftCamera == cinema::camera::Settings());
+
 }
 // AI: end

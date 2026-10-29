@@ -19,6 +19,37 @@
 	let previewLoading = false;
 	let cinemaSaving = false;
 
+	const cameraFields = [
+		['brightness','CBRI',-2,2,0], ['contrast','CCON',-2,2,0], ['saturation','CSAT',-2,2,0],
+		['ae','CAE',-2,2,0], ['exposure','CEXP',0,1200,300], ['gain','CGAIN',0,30,0],
+		['ceiling','CCEI',0,5,1], ['quality','CQUAL',10,40,12]
+	];
+	function defaultCameraSettings() {
+		return {...Object.fromEntries(cameraFields.map(f => [f[0], f[4]])), wb: 0, awb: true, aec: true, agc: true};
+	}
+	let cameraSettings = {left: defaultCameraSettings(), right: defaultCameraSettings()};
+	function validCameraSettings(sensor) {
+		return !!sensor && cameraFields.every(([key,,min,max]) => Number.isInteger(sensor[key]) && sensor[key] >= min && sensor[key] <= max)
+			&& Number.isInteger(sensor.wb) && sensor.wb >= 0 && sensor.wb <= 4
+			&& ['awb','aec','agc'].every(key => typeof sensor[key] === 'boolean');
+	}
+	// Store edits immediately under the selected camera, so switching sides never overwrites them.
+	function editCameraSettings() {
+		const sensor = Object.fromEntries(cameraFields.map(([key,id]) => [key, Number(gId(id).value)]));
+		const wb = Number(gId('CWB').value);
+		Object.assign(sensor, {wb: wb === 5 ? 0 : wb, awb: wb !== 5, aec: gId('CAEC').checked, agc: gId('CAGC').checked});
+		cameraSettings[gId('calibrationSide').value] = sensor;
+		gId('CGAIN').disabled = sensor.agc; gId('CEXP').disabled = sensor.aec;
+		updateCinemaTotal();
+	}
+	function loadCameraSettings() {
+		const sensor = cameraSettings[gId('calibrationSide').value];
+		cameraFields.forEach(([key,id]) => gId(id).value = sensor[key]);
+		gId('CWB').value = sensor.awb ? sensor.wb : 5;
+		gId('CAEC').checked = sensor.aec; gId('CAGC').checked = sensor.agc;
+		gId('CGAIN').disabled = sensor.agc; gId('CEXP').disabled = sensor.aec;
+	}
+
 	(function loadFiles() {
 		const l = document.createElement('script');
 		l.src = 'common.js';
@@ -49,7 +80,8 @@
 		gId('cinemaTotal').textContent = String(total);
 		const valid = total <= maxCinemaLeds && (!gId('CE').checked || total > 0) && cinemaSpiValid(gId('CE').checked);
 		const calibrationValid = validQuad(calibration.left) && validQuad(calibration.right);
-		const coordinatesValid = [...document.querySelectorAll('#calibrationCoordinates input')].every(input => input.validity.valid);
+		const coordinatesValid = [...document.querySelectorAll('#calibrationCoordinates input, #cameraControls input')].every(input => input.validity.valid)
+			&& validCameraSettings(cameraSettings.left) && validCameraSettings(cameraSettings.right);
 		gId('saveCinema').disabled = !valid || !calibrationValid || !coordinatesValid || previewLoading || cinemaSaving;
 		gId('capturePhoto').disabled = previewLoading || cinemaSaving;
 		gId('calibrationError').hidden = calibrationValid;
@@ -79,6 +111,8 @@
 		gId('CBL').value = color.black ?? 4;
 		gId('CSM').value = color.smooth ?? 96;
 		if (cinemaConfig.cal) calibration = structuredClone(cinemaConfig.cal);
+		cameraSettings = {left: {...defaultCameraSettings(), ...cinemaConfig.camera?.left}, right: {...defaultCameraSettings(), ...cinemaConfig.camera?.right}};
+		loadCameraSettings();
 		updateCalibrationFields();
 		drawCalibration();
 		updateCinemaTotal();
@@ -98,7 +132,8 @@
 	}
 
 	function cinemaConfigMatches(saved, expected) {
-		if (!saved || saved.v !== expected.v || saved.on !== expected.on || saved.gen !== expected.gen || saved.top !== expected.top || saved.right !== expected.right || saved.bottom !== expected.bottom || saved.left !== expected.left || saved.zero !== expected.zero || saved.cw !== expected.cw || JSON.stringify(saved.cal) !== JSON.stringify(expected.cal)) return false;
+		if (!saved || saved.v !== expected.v || saved.on !== expected.on || saved.gen !== expected.gen || saved.top !== expected.top || saved.right !== expected.right || saved.bottom !== expected.bottom || saved.left !== expected.left || saved.zero !== expected.zero || saved.cw !== expected.cw || JSON.stringify(saved.cal) !== JSON.stringify(expected.cal)
+			|| !['left','right'].every(side => saved.camera?.[side] && [...cameraFields.map(f => f[0]),'wb','awb','aec','agc'].every(key => saved.camera[side][key] === expected.camera[side][key]))) return false;
 		const savedSpi = saved.spi || {};
 		const savedColor = saved.color || {};
 		return savedSpi.sclk === expected.spi.sclk && savedSpi.mosi === expected.spi.mosi && savedSpi.miso === expected.spi.miso && savedSpi.misor === expected.spi.misor && savedSpi.csl === expected.spi.csl && savedSpi.csr === expected.spi.csr && savedSpi.hz === expected.spi.hz && savedColor.boost === expected.color.boost && savedColor.dark === expected.color.dark && savedColor.black === expected.color.black && savedColor.smooth === expected.color.smooth;
@@ -107,7 +142,7 @@
 	function saveCinema(event) {
 		event.preventDefault();
 		const config = {
-			v: 5,
+			v: 6,
 			on: gId('CE').checked,
 			gen: nextCinemaGeneration(),
 			top: cinemaCount('CT'),
@@ -117,6 +152,7 @@
 			zero: Number.parseInt(gId('CZ').value, 10),
 			cw: gId('CW').checked,
 			cal: structuredClone(calibration),
+			camera: structuredClone(cameraSettings),
 			spi: {
 				sclk: cinemaPin('SCK'),
 				mosi: cinemaPin('MO'),
@@ -203,6 +239,7 @@
 	}
 
 	function changeCalibrationSide() {
+		loadCameraSettings();
 		updateCalibrationFields();
 		drawCalibration();
 		gId('photoStatus').textContent = cameraPhotos[gId('calibrationSide').value] ? 'Photo retained in this browser. Reload it if the camera moved.' : 'Enable and save Cinema, then load this camera photo.';
@@ -292,7 +329,7 @@
 		previewLoading = true; updateCinemaTotal();
 		gId('calibrationSide').disabled = true;
 		const side = gId('calibrationSide').value, status = gId('photoStatus');
-		const abort = new AbortController(), timeout = setTimeout(() => abort.abort(), 16000);
+		const abort = new AbortController(), timeout = setTimeout(() => abort.abort(), 24000);
 		const checkedFetch = async (url, options = {}) => {
 			const response = await fetch(getURL(url), {...options, signal: abort.signal, cache: 'no-store'});
 			if (response.status === 401) throw new Error('Settings PIN expired. Reopen Cinema settings.');
@@ -303,27 +340,32 @@
 		try {
 			status.textContent = 'Requesting camera photo...';
 			const info = await (await checkedFetch(`/json/cinema/preview?side=${side}`, {method: 'POST'})).json();
-			if (!Number.isInteger(info.id) || !info.id || info.width !== 128 || info.height !== 96 || info.size !== 24576 || info.chunk !== 1024) throw new Error('Unsupported photo format. Update all three firmwares.');
+			if (!Number.isInteger(info.id) || !info.id || info.format !== 'jpeg' || info.chunk !== 1024) throw new Error('Unsupported photo format. Update all three firmwares.');
 			while (true) {
 				const progress = await (await checkedFetch(`/json/cinema/preview?id=${info.id}`)).json();
-				if (progress.state === 2) break;
+				if (progress.state === 2) {
+					Object.assign(info, {width: progress.width, height: progress.height, size: progress.size});
+					if (![info.width,info.height,info.size].every(Number.isInteger) || info.width < 1 || info.width > 640 || info.height < 1 || info.height > 480 || info.size < 4 || info.size > 49152) throw new Error('Invalid JPEG metadata.');
+					break;
+				}
 				if (progress.state !== 1) throw new Error('Camera photo failed or timed out. Retry.');
-				status.textContent = `Receiving camera photo: ${Math.floor(progress.received * 100 / info.size)}%`;
+				status.textContent = progress.size ? `Receiving JPEG: ${Math.floor(progress.received * 100 / progress.size)}%` : 'Acquiring 640x480 photo (this camera briefly pauses)...';
 				await new Promise(resolve => setTimeout(resolve, 250));
 			}
 			const bytes = new Uint8Array(info.size);
 			for (let offset = 0; offset < info.size; offset += info.chunk) {
 				const chunk = new Uint8Array(await (await checkedFetch(`/json/cinema/preview?id=${info.id}&offset=${offset}`)).arrayBuffer());
-				if (chunk.length !== info.chunk) throw new Error('Incomplete camera photo. Retry.');
+				if (chunk.length !== Math.min(info.chunk, info.size - offset)) throw new Error('Incomplete camera photo. Retry.');
 				bytes.set(chunk, offset);
 			}
-			const canvas = document.createElement('canvas'); canvas.width = info.width; canvas.height = info.height;
-			const context = canvas.getContext('2d'), pixels = context.createImageData(info.width, info.height);
-			for (let i = 0; i < info.size / 2; i++) {
-				const rgb = (bytes[i * 2] << 8) | bytes[i * 2 + 1], r = rgb >> 11, g = (rgb >> 5) & 63, b = rgb & 31;
-				pixels.data.set([(r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2), 255], i * 4);
-			}
-			context.putImageData(pixels, 0, 0); cameraPhotos[side] = {canvas, pixels};
+			const bitmap = await createImageBitmap(new Blob([bytes], {type: 'image/jpeg'}));
+			try {
+				if (bitmap.width !== info.width || bitmap.height !== info.height) throw new Error('JPEG dimensions do not match the camera metadata.');
+				const canvas = document.createElement('canvas'); canvas.width = info.width; canvas.height = info.height;
+				const context = canvas.getContext('2d'); context.drawImage(bitmap, 0, 0);
+				const pixels = context.getImageData(0, 0, info.width, info.height);
+				cameraPhotos[side] = {canvas, pixels};
+			} finally { bitmap.close(); }
 			drawCalibration(); status.textContent = 'Photo loaded. Position the four corners, check the corrected view, then Save.';
 		} catch (error) {
 			status.textContent = error.name === 'AbortError' ? 'Camera photo timed out. Retry after checking the link.' : error.message;
@@ -412,8 +454,23 @@
 		<h3>Camera perspective calibration</h3>
 		<p>Display a bright screen with a vertical center line on the TV. For each camera, mark the four corners of its own half-screen in the photo. TL/TR/BR/BL refer to screen corners, even when the camera is rotated or mirrored.</p>
 		<label>Camera: <select id="calibrationSide" onchange="changeCalibrationSide()"><option value="left">Left half</option><option value="right">Right half</option></select></label>
+		<div id="cameraControls" oninput="editCameraSettings()">
+			<p>Sensor controls apply after Save. Reload the photo to see the result.</p>
+			Brightness: <input id="CBRI" type="number" min="-2" max="2" step="1" required><br>
+			Contrast: <input id="CCON" type="number" min="-2" max="2" step="1" required><br>
+			Saturation: <input id="CSAT" type="number" min="-2" max="2" step="1" required><br>
+			White balance: <select id="CWB"><option value="0">Auto</option><option value="1">Sunny</option><option value="2">Cloudy</option><option value="3">Office</option><option value="4">Home</option><option value="5">Disabled</option></select><br>
+			Auto exposure: <input id="CAEC" type="checkbox"><br>
+			Exposure target: <input id="CAE" type="number" min="-2" max="2" step="1" required><br>
+			Manual exposure: <input id="CEXP" type="number" min="0" max="1200" step="1" required><br>
+			Auto gain: <input id="CAGC" type="checkbox"><br>
+			Maximum gain: <select id="CCEI"><option value="0">2x</option><option value="1">4x</option><option value="2">8x</option><option value="3">16x</option><option value="4">32x</option><option value="5">64x</option></select><br>
+			Manual gain: <input id="CGAIN" type="number" min="0" max="30" step="1" required><br>
+			JPEG quality (lower is better): <input id="CQUAL" type="number" min="10" max="40" step="1" required><br>
+			<p>Start neutral. Use white, black and RGB test screens; choose a fixed white-balance preset for stable TV colors. High gain can amplify dark noise.</p>
+		</div>
 		<button id="capturePhoto" type="button" onclick="loadCameraPhoto()">Load camera photo</button>
-		<div id="photoStatus" aria-live="polite">Enable and save Cinema, then load each camera photo.</div>
+		<div id="photoStatus" aria-live="polite">Save the sensor settings, then load each JPEG photo. Acquisition briefly pauses that camera's LED updates.</div>
 		<canvas id="calibrationCanvas" width="512" height="384" aria-label="Camera photo with draggable screen corner markers"></canvas>
 		<button type="button" onclick="remapCalibration('rotate')">Rotate labels</button>
 		<button type="button" onclick="remapCalibration('mirror')">Mirror labels</button>

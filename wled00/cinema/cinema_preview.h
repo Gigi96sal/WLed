@@ -16,9 +16,10 @@ struct PreviewInfo {
   protocol::NodeRole role = protocol::NodeRole::Unspecified;
   PreviewState state = PreviewState::Idle;
   uint16_t received = 0;
+  uint16_t size = 0, width = 0, height = 0;
 };
 
-// One on-demand thumbnail, shared safely between the WLED loop and HTTP task. Network responses
+// One on-demand JPEG, shared safely between the WLED loop and HTTP task. Network responses
 // copy at most one chunk while locked; neither task owns a pointer into this buffer after unlocking.
 class CinemaPreview {
   public:

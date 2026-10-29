@@ -8,7 +8,9 @@ const vm = require('node:vm');
 // Exercise the actual page's pure math against analytic cases, independently of DOM/browser fixtures.
 const page = fs.readFileSync(path.join(__dirname, '../wled00/data/settings_cinema.htm'), 'utf8');
 const scope = vm.createContext({});
-for (const name of ['validQuad', 'calibrationTransform']) {
+const fields = page.slice(page.indexOf('const cameraFields ='), page.indexOf('function defaultCameraSettings()'));
+vm.runInContext(fields, scope);
+for (const name of ['validQuad', 'calibrationTransform', 'defaultCameraSettings', 'validCameraSettings']) {
   const start = page.indexOf(`function ${name}(`);
   const end = page.indexOf('\n\t}', start) + 3;
   assert(start >= 0 && end > start);
@@ -39,5 +41,12 @@ test('Cinema preview accepts rotations/mirrors and rejects invalid regions', () 
   assert(!scope.validQuad([point(0, 0), point(1, 0), point(.1, .1), point(0, 1)]));
   assert(!scope.validQuad([point(0, 0), point(1, 0), point(1, .005), point(0, .005)]));
   assert(!scope.validQuad([[0, 0], [65536, 0], [65535, 65535], [0, 65535]]));
+});
+test('Cinema camera controls preserve valid defaults and reject invalid numeric/boolean fields', () => {
+  const valid = scope.defaultCameraSettings();
+  assert(scope.validCameraSettings(valid));
+  for (const invalid of [{saturation: 3}, {quality: 0}, {exposure: 1201}, {gain: -1}, {ceiling: 6}, {awb: 'true'}, {wb: 5}, {contrast: 0.5}]) {
+    assert(!scope.validCameraSettings({...valid, ...invalid}));
+  }
 });
 // AI: end

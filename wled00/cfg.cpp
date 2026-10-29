@@ -60,7 +60,7 @@ static bool deserializeCinemaConfig(JsonObject root, bool fromFS) {
   const uint32_t leftLeds = cinemaSettings["left"] | 0;
   const uint32_t zeroCorner = cinemaSettings["zero"] | 0;
 
-  if ((schemaVersion < 1 || schemaVersion > 5) || topLeds > cinema::wled::MAX_CINEMA_LEDS || rightLeds > cinema::wled::MAX_CINEMA_LEDS || bottomLeds > cinema::wled::MAX_CINEMA_LEDS || leftLeds > cinema::wled::MAX_CINEMA_LEDS || zeroCorner > static_cast<uint8_t>(cinema::wled::ZeroCorner::BottomLeft)) {
+  if ((schemaVersion < 1 || schemaVersion > 6) || topLeds > cinema::wled::MAX_CINEMA_LEDS || rightLeds > cinema::wled::MAX_CINEMA_LEDS || bottomLeds > cinema::wled::MAX_CINEMA_LEDS || leftLeds > cinema::wled::MAX_CINEMA_LEDS || zeroCorner > static_cast<uint8_t>(cinema::wled::ZeroCorner::BottomLeft)) {
     if (fromFS) cinemaController.applyConfig(cinema::wled::CinemaConfig());
     return !fromFS;
   }
@@ -134,18 +134,47 @@ static bool deserializeCinemaConfig(JsonObject root, bool fromFS) {
     config.color.smoothness = static_cast<uint8_t>(smoothness);
   }
 
+  if (schemaVersion >= 6) {
+    JsonObject cameras = cinemaSettings["camera"];
+    for (uint8_t side = 0; side < 2; side++) {
+      JsonObject object = cameras[side == 0 ? "left" : "right"];
+      auto& sensor = side == 0 ? config.leftCamera : config.rightCamera;
+      const char* fields[] = {"brightness", "contrast", "saturation", "ae", "wb", "exposure", "gain", "ceiling", "quality"};
+      int values[9];
+      bool valid = !object.isNull();
+      for (uint8_t i = 0; valid && i < 9; i++) {
+        valid = object[fields[i]].is<int>();
+        if (valid) values[i] = object[fields[i]].as<int>();
+      }
+      valid = valid && values[0] >= -2 && values[0] <= 2 && values[1] >= -2 && values[1] <= 2
+          && values[2] >= -2 && values[2] <= 2 && values[3] >= -2 && values[3] <= 2
+          && values[4] >= 0 && values[4] <= 4 && values[5] >= 0 && values[5] <= 1200
+          && values[6] >= 0 && values[6] <= 30 && values[7] >= 0 && values[7] <= 5
+          && values[8] >= 10 && values[8] <= 40
+          && object["awb"].is<bool>() && object["aec"].is<bool>() && object["agc"].is<bool>();
+      if (!valid) {
+        if (fromFS) cinemaController.applyConfig(cinema::wled::CinemaConfig());
+        return !fromFS;
+      }
+      sensor.brightness = values[0]; sensor.contrast = values[1]; sensor.saturation = values[2];
+      sensor.aeLevel = values[3]; sensor.wbMode = values[4]; sensor.exposure = values[5];
+      sensor.gain = values[6]; sensor.gainCeiling = values[7]; sensor.jpegQuality = values[8];
+      sensor.whiteBalance = object["awb"]; sensor.autoExposure = object["aec"]; sensor.autoGain = object["agc"];
+    }
+  }
+
   if (!config.isStructurallyValid()) {
     if (fromFS) cinemaController.applyConfig(cinema::wled::CinemaConfig());
     return !fromFS;
   }
   const bool applied = cinemaController.applyConfig(config);
-  return applied && schemaVersion == 5;
+  return applied && schemaVersion == 6;
 }
 
 static void serializeCinemaConfig(JsonObject root) {
   const cinema::wled::CinemaConfig config = cinemaController.config();
   JsonObject cinemaSettings = root.createNestedObject("cinema");
-  cinemaSettings["v"] = 5;
+  cinemaSettings["v"] = 6;
   cinemaSettings["on"] = config.enabled;
   cinemaSettings["gen"] = config.generation;
   cinemaSettings["top"] = config.topLeds;
@@ -163,6 +192,15 @@ static void serializeCinemaConfig(JsonObject root) {
       coordinates.add(point.x);
       coordinates.add(point.y);
     }
+  }
+  JsonObject cameras = cinemaSettings.createNestedObject("camera");
+  for (uint8_t side = 0; side < 2; side++) {
+    JsonObject object = cameras.createNestedObject(side == 0 ? "left" : "right");
+    const auto& sensor = side == 0 ? config.leftCamera : config.rightCamera;
+    object["brightness"] = sensor.brightness; object["contrast"] = sensor.contrast; object["saturation"] = sensor.saturation;
+    object["ae"] = sensor.aeLevel; object["wb"] = sensor.wbMode; object["exposure"] = sensor.exposure;
+    object["gain"] = sensor.gain; object["ceiling"] = sensor.gainCeiling; object["quality"] = sensor.jpegQuality;
+    object["awb"] = sensor.whiteBalance; object["aec"] = sensor.autoExposure; object["agc"] = sensor.autoGain;
   }
   JsonObject spiSettings = cinemaSettings.createNestedObject("spi");
   spiSettings["sclk"] = config.spi.sclkPin;

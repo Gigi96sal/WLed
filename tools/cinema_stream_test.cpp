@@ -221,8 +221,26 @@ static void testEndToEnd() {
   assert(cinemaTest::liveAllocations == 0);
 }
 
+// Verify the pinned decoder's BGR ordering and all camera-settings wire boundaries.
+static void testCameraSettingsAndBgr() {
+  stream::Config config{7, 2, 0, 0, 0};
+  config.leftCamera.saturation = -2; config.rightCamera.whiteBalance = false;
+  config.rightCamera.jpegQuality = 40;
+  uint8_t encoded[stream::CONFIG_SIZE]; stream::Config decoded;
+  assert(stream::encodeConfig(config, encoded, sizeof(encoded), 42, preview::METADATA_REQUEST));
+  assert(stream::decodeConfig(encoded, sizeof(encoded), &decoded) && config == decoded);
+  encoded[53] |= 0x80; // Reserved sensor flag.
+  assert(!stream::decodeConfig(encoded, sizeof(encoded), &decoded));
+  const uint8_t redBgr[] = {0,0,255}, blueBgr[] = {255,0,0}; uint8_t colors[3];
+  assert(stream::sampleBgr888(config, NodeRole::CameraLeft, redBgr, 3, 1, 1, colors, 3));
+  assert(colors[0] == 255 && colors[1] == 0 && colors[2] == 0);
+  assert(stream::sampleBgr888(config, NodeRole::CameraRight, blueBgr, 3, 1, 1, colors, 3));
+  assert(colors[0] == 0 && colors[1] == 0 && colors[2] == 255);
+  assert(!stream::sampleBgr888(config, NodeRole::CameraRight, blueBgr, 2, 1, 1, colors, 3));
+}
+
 int main() {
-  testSampling();
+  testSampling(); testCameraSettingsAndBgr();
   testCaptureContract();
   testEndToEnd();
   std::cout << "Cinema RGB checks passed: sampling, configuration, capture provenance, full-duplex frames and recovery.\n";

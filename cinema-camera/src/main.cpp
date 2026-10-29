@@ -56,29 +56,41 @@ void loop() {
     delay(1);
     return;
   }
+  const auto role = static_cast<cinema::protocol::NodeRole>(CINEMA_CAMERA_ROLE);
+  const auto& settings = role == cinema::protocol::NodeRole::CameraLeft ? request.config.leftCamera : request.config.rightCamera;
+  if (!cameraService.configure(settings)) { delay(1); return; }
   lastAttemptUs = nowUs;
+  if (request.previewId != 0 && (request.previewId != lastPreviewId || request.controllerBootId != lastPreviewControllerBootId)) {
+    const auto photoRequest = request;
+    camera_fb_t* photo = cameraService.capturePreview();
+    if (spiEndpoint.captureRequest(&request) && request.previewId == photoRequest.previewId
+        && request.controllerBootId == photoRequest.controllerBootId && request.config == photoRequest.config) {
+      const bool freshPhoto = photo && (static_cast<uint64_t>(photo->timestamp.tv_sec) * 1000000ULL + photo->timestamp.tv_usec) >= photoRequest.previewStartedUs;
+      const bool copied = freshPhoto ? spiEndpoint.publishPreview(request, photo->buf, photo->len, photo->width, photo->height)
+                                : spiEndpoint.publishPreview(request, nullptr, 0, 0, 0);
+      if (copied) { lastPreviewId = request.previewId; lastPreviewControllerBootId = request.controllerBootId; }
+    }
+    cameraService.release(photo);
+    cameraService.resumeStream();
+    delay(1);
+    return;
+  }
   camera_fb_t* frame = cameraService.acquire();
   if (!frame) { delay(1); return; }
   const uint64_t captureUs = static_cast<uint64_t>(frame->timestamp.tv_sec) * 1000000ULL + frame->timestamp.tv_usec;
+  const uint8_t* image = cameraService.decode(frame);
   uint32_t pollSequence = 0;
-  // The driver can return an image captured before the newest command. Select its earlier
-  // command from the bounded history; never label an old framebuffer with a newer request.
-  if (frame->format == PIXFORMAT_RGB565 && captureUs > lastCaptureUs && spiEndpoint.captureRequest(&request)
+  if (image && captureUs > lastCaptureUs && spiEndpoint.captureRequest(&request)
+      && (role == cinema::protocol::NodeRole::CameraLeft ? request.config.leftCamera : request.config.rightCamera) == cameraService.settings()
       && request.requestForCapture(captureUs, esp_timer_get_time(), &pollSequence)
-      && cinema::stream::sampleRgb565(request.config, static_cast<cinema::protocol::NodeRole>(CINEMA_CAMERA_ROLE),
-          frame->buf, frame->len, frame->width, frame->height, rgbFrame.colors, sizeof(rgbFrame.colors))) {
-    if (request.previewId != 0 && captureUs >= request.previewStartedUs
-        && (request.previewId != lastPreviewId || request.controllerBootId != lastPreviewControllerBootId)
-        && spiEndpoint.publishPreview(request, frame->buf, frame->len, frame->width, frame->height)) {
-      lastPreviewId = request.previewId;
-      lastPreviewControllerBootId = request.controllerBootId;
-    }
+      && cinema::stream::sampleBgr888(request.config, role, image, cinema::camera::DECODED_SIZE,
+          cinema::camera::STREAM_WIDTH, cinema::camera::STREAM_HEIGHT, rgbFrame.colors, sizeof(rgbFrame.colors))) {
     rgbFrame.header.configGeneration = request.config.generation;
     rgbFrame.header.controllerBootId = request.controllerBootId;
     rgbFrame.header.pollSequence = pollSequence;
     rgbFrame.header.frameId = ++frameId;
     rgbFrame.header.captureTimeUs = captureUs;
-    rgbFrame.header.slotCount = cinema::stream::slotCount(request.config, static_cast<cinema::protocol::NodeRole>(CINEMA_CAMERA_ROLE));
+    rgbFrame.header.slotCount = cinema::stream::slotCount(request.config, role);
     const uint64_t interval = captureUs - lastPublishedUs;
     rgbFrame.header.fpsQ8_8 = lastPublishedUs > 0 && interval > 0 ? static_cast<uint16_t>(std::min<uint64_t>(UINT16_MAX, 256000000ULL / interval)) : 0;
     spiEndpoint.publishFrame(rgbFrame);

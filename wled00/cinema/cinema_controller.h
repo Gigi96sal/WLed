@@ -69,9 +69,10 @@ struct CinemaConfig {
   CinemaColorConfig color;
   geometry::Quad leftCalibration;
   geometry::Quad rightCalibration;
+  camera::Settings leftCamera, rightCamera;
 
   uint16_t totalLeds() const;
-  stream::Config streamConfig() const { return {generation, topLeds, rightLeds, bottomLeds, leftLeds, stream::DEFAULT_FPS, leftCalibration, rightCalibration}; }
+  stream::Config streamConfig() const { return {generation, topLeds, rightLeds, bottomLeds, leftLeds, stream::DEFAULT_FPS, leftCalibration, rightCalibration, leftCamera, rightCamera}; }
   bool isStructurallyValid() const;
   bool isValidForSegment(uint16_t segmentLength) const;
 };

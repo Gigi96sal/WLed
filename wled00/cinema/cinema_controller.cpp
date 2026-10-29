@@ -14,7 +14,7 @@ bool CinemaConfig::isStructurallyValid() const {
   if (totalLeds() > MAX_CINEMA_LEDS) return false;
   if (static_cast<uint8_t>(zeroCorner) > static_cast<uint8_t>(ZeroCorner::BottomLeft)) return false;
   if (!spi.isStructurallyValid()) return false;
-  if (!leftCalibration.isValid() || !rightCalibration.isValid()) return false;
+  if (!leftCalibration.isValid() || !rightCalibration.isValid() || !leftCamera.isValid() || !rightCamera.isValid()) return false;
   return !enabled || (generation != 0 && totalLeds() != 0 && spi.isComplete());
 }
 
@@ -85,7 +85,7 @@ void CinemaController::service(uint32_t nowMillis) {
   _preview.service(nowMillis);
   PreviewInfo previewInfo;
   if (!_cancelPreview && _preview.info(&previewInfo) && previewInfo.state == PreviewState::Capturing) {
-    _spiMaster.setPreviewRequest(previewInfo.role, previewInfo.id, previewInfo.received);
+    _spiMaster.setPreviewRequest(previewInfo.role, previewInfo.id, previewInfo.size ? previewInfo.received : preview::METADATA_REQUEST);
   } else _spiMaster.setPreviewRequest(protocol::NodeRole::Unspecified, 0, 0);
   if (_spiMaster.poll(&packet, &expectedSource, nowMillis)) {
     // SPI validates capture provenance separately. Hold an accepted frame from its actual
@@ -241,7 +241,7 @@ bool CinemaController::processPacket(const protocol::PacketView& packet, protoco
   status.lastSequence = packet.header.sequence;
 
   if (packet.header.type == protocol::MessageType::Heartbeat) return true;
-  if (packet.header.type == protocol::MessageType::SnapshotChunk) return _preview.accept(packet, _spiMaster.controllerBootId());
+  if (packet.header.type == protocol::MessageType::SnapshotBegin || packet.header.type == protocol::MessageType::SnapshotChunk) return _preview.accept(packet, _spiMaster.controllerBootId());
   if (packet.header.type == protocol::MessageType::FrameRgb) return frameIsFresh && acceptFrame(packet, nowMillis);
   return false;
 }

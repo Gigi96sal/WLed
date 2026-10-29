@@ -35,8 +35,8 @@ void CinemaPreview::unlock() const {
 bool CinemaPreview::request(protocol::NodeRole role, uint32_t nowMillis, PreviewInfo* info) {
   if (!info || (role != protocol::NodeRole::CameraLeft && role != protocol::NodeRole::CameraRight) || !lock()) return false;
   if (_info.state == PreviewState::Capturing) { unlock(); return false; }
-  if (!_pixels) _pixels = static_cast<uint8_t*>(d_malloc(preview::IMAGE_SIZE));
-  if (!_pixels) { unlock(); return false; }
+  free(_pixels);
+  _pixels = nullptr; // Allocate the actual JPEG length only after validated metadata arrives.
 #ifdef ARDUINO_ARCH_ESP32
   // Old browser tabs must not reuse a new boot's first thumbnail token accidentally.
   if (_lastId == 0) _lastId = esp_random();
@@ -59,11 +59,11 @@ bool CinemaPreview::info(PreviewInfo* info) const {
 
 // A complete image stays immutable until a new request or expiry; stale HTTP tokens fail cleanly.
 bool CinemaPreview::read(uint32_t id, uint16_t offset, uint8_t* output, size_t* size) const {
-  if (!output || !size || offset >= preview::IMAGE_SIZE || offset % preview::CHUNK_SIZE != 0 || !lock()) return false;
-  const bool ready = _pixels && _info.state == PreviewState::Ready && _info.id == id;
+  if (!output || !size || offset % preview::CHUNK_SIZE != 0 || !lock()) return false;
+  const bool ready = _pixels && _info.state == PreviewState::Ready && _info.id == id && offset < _info.size;
   if (ready) {
-    memcpy(output, _pixels + offset, preview::CHUNK_SIZE);
-    *size = preview::CHUNK_SIZE;
+    *size = std::min<size_t>(preview::CHUNK_SIZE, _info.size - offset);
+    memcpy(output, _pixels + offset, *size);
   }
   unlock();
   return ready;
@@ -71,20 +71,43 @@ bool CinemaPreview::read(uint32_t id, uint16_t offset, uint8_t* output, size_t* 
 
 // Pulling the same chunk until accepted recovers corrupt, lost and duplicate full-duplex responses.
 bool CinemaPreview::accept(const protocol::PacketView& packet, uint32_t controllerBootId) {
-  preview::Chunk chunk;
-  if (packet.header.type != protocol::MessageType::SnapshotChunk || packet.header.target != protocol::NodeRole::Controller
-      || !preview::decodeChunk(packet.payload, packet.payloadSize, &chunk) || chunk.controllerBootId != controllerBootId || !lock()) return false;
+  if (packet.header.target != protocol::NodeRole::Controller || !lock()) return false;
+  if (_info.state != PreviewState::Capturing || packet.header.source != _info.role) { unlock(); return false; }
   bool accepted = false;
-  if (_pixels && _info.state == PreviewState::Capturing && packet.header.source == _info.role
-      && chunk.id == _info.id && chunk.offset == _info.received) {
-    if (_info.received != 0 && _cameraBootId != packet.header.bootId) {
-      _info.state = PreviewState::Failed; // Never combine image chunks from two camera boots.
-    } else {
-      _cameraBootId = packet.header.bootId;
-      memcpy(_pixels + chunk.offset, chunk.data, chunk.size);
-      _info.received += chunk.size;
-      if (_info.received == preview::IMAGE_SIZE) _info.state = PreviewState::Ready;
-      accepted = true;
+  if (packet.header.type == protocol::MessageType::SnapshotBegin) {
+    preview::Metadata m;
+    if (preview::decodeMetadata(packet.payload, packet.payloadSize, &m) && m.id == _info.id && m.controllerBootId == controllerBootId) {
+      if (_info.size != 0) {
+        accepted = _cameraBootId == packet.header.bootId && m.size == _info.size && m.width == _info.width && m.height == _info.height;
+        if (!accepted) _info.state = PreviewState::Failed;
+      } else if (m.size == 0) {
+        _info.state = PreviewState::Failed;
+      } else {
+        _pixels = static_cast<uint8_t*>(d_malloc(m.size));
+        if (!_pixels) _info.state = PreviewState::Failed;
+        else {
+          _info.size = static_cast<uint16_t>(m.size); _info.width = m.width; _info.height = m.height;
+          _cameraBootId = packet.header.bootId;
+          accepted = true;
+        }
+      }
+    }
+  } else if (packet.header.type == protocol::MessageType::SnapshotChunk) {
+    preview::Chunk chunk;
+    if (_pixels && preview::decodeChunk(packet.payload, packet.payloadSize, &chunk) && chunk.id == _info.id
+        && chunk.controllerBootId == controllerBootId && chunk.offset == _info.received
+        && chunk.size == std::min<size_t>(preview::CHUNK_SIZE, _info.size - _info.received)) {
+      if (_cameraBootId != packet.header.bootId) _info.state = PreviewState::Failed;
+      else {
+        memcpy(_pixels + chunk.offset, chunk.data, chunk.size);
+        _info.received += chunk.size;
+        accepted = true;
+        if (_info.received == _info.size) {
+          uint16_t width = 0, height = 0;
+          _info.state = preview::jpegDimensions(_pixels, _info.size, &width, &height) && width == _info.width && height == _info.height
+              ? PreviewState::Ready : PreviewState::Failed;
+        }
+      }
     }
   }
   unlock();
@@ -98,7 +121,7 @@ void CinemaPreview::service(uint32_t nowMillis) {
   if (static_cast<int32_t>(nowMillis - _startedMillis) < 0) { unlock(); return; }
   const uint32_t age = nowMillis - _startedMillis;
   if (_info.state == PreviewState::Capturing && age > preview::CAPTURE_TIMEOUT_MS) _info.state = PreviewState::Failed;
-  if (age > preview::RETENTION_MS && _pixels) {
+  if (age > preview::RETENTION_MS) {
     free(_pixels);
     _pixels = nullptr;
     _info.state = PreviewState::Idle;

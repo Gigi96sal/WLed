@@ -14,7 +14,7 @@ namespace protocol {
 
 constexpr uint8_t PROTOCOL_MAGIC_0 = 'C';
 constexpr uint8_t PROTOCOL_MAGIC_1 = 'M';
-constexpr uint8_t PROTOCOL_VERSION_MAJOR = 3;
+constexpr uint8_t PROTOCOL_VERSION_MAJOR = 4;
 constexpr uint8_t PROTOCOL_VERSION_MINOR = 0;
 
 constexpr size_t PACKET_HEADER_SIZE = 20;

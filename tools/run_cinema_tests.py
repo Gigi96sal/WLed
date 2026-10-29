@@ -51,6 +51,7 @@ def main():
         unsupported.write_text('#include "wled.h"\nint main(){ cinema::wled::CinemaController controller; cinema::wled::CinemaConfig config; config.generation=7; assert(controller.applyConfig(config)); controller.begin(); controller.service(millis()); assert(controller.config().generation==7 && !controller.transportReady()); }\n', encoding="utf-8")
         production = [root / "wled00/cinema/cinema_controller.cpp", root / "wled00/cinema/cinema_spi_master.cpp", root / "wled00/cinema/cinema_preview.cpp"]
         cases = {
+            "jpeg": [root / "tools/cinema_jpeg_test.cpp"],
             "protocol": [root / "tools/cinema_protocol_test.cpp"],
             "stream": [root / "tools/cinema_stream_test.cpp", root / "cinema-camera/src/spi_slave_endpoint.cpp", *production],
             "calibration": [root / "tools/cinema_calibration_test.cpp", root / "cinema-camera/src/spi_slave_endpoint.cpp", *production],

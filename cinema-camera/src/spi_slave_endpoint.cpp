@@ -1,6 +1,7 @@
 #include "spi_slave_endpoint.h"
 
 #include <Arduino.h>
+#include <algorithm>
 #include <driver/spi_slave.h>
 #include <esp_heap_caps.h>
 #include <esp_system.h>
@@ -39,8 +40,9 @@ bool SpiSlaveEndpoint::begin() {
   }
   _initialized = true;
   _previewMutex = xSemaphoreCreateMutexStatic(&_previewMutexControl);
-  _previewPixels = static_cast<uint8_t*>(heap_caps_malloc(preview::IMAGE_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  _previewPixels = static_cast<uint8_t*>(heap_caps_malloc(preview::MAX_IMAGE_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   _previewId = _previewControllerBootId = 0;
+  _previewSize = _previewWidth = _previewHeight = 0;
   _previewTurn = false;
   if (!_previewMutex || !_previewPixels) { end(); return false; }
 
@@ -118,24 +120,41 @@ bool SpiSlaveEndpoint::prepareNextSlot() {
 bool SpiSlaveEndpoint::preparePreviewChunk() {
   if (_request.previewId == 0 || !_previewMutex || xSemaphoreTake(_previewMutex, 0) != pdTRUE) return false;
   bool ready = _previewId == _request.previewId && _previewControllerBootId == _request.controllerBootId;
+  size_t payloadSize = 0;
+  auto type = protocol::MessageType::SnapshotChunk;
   if (ready) {
     protocol::writeU32Le(_payloadBuffer, _previewId);
     protocol::writeU32Le(_payloadBuffer + 4, _previewControllerBootId);
-    protocol::writeU16Le(_payloadBuffer + 8, _request.previewOffset);
-    protocol::writeU16Le(_payloadBuffer + 10, preview::CHUNK_SIZE);
-    memcpy(_payloadBuffer + preview::HEADER_SIZE, _previewPixels + _request.previewOffset, preview::CHUNK_SIZE);
+    if (_request.previewOffset == preview::METADATA_REQUEST) {
+      type = protocol::MessageType::SnapshotBegin;
+      protocol::writeU32Le(_payloadBuffer + 8, _previewSize);
+      protocol::writeU16Le(_payloadBuffer + 12, _previewWidth);
+      protocol::writeU16Le(_payloadBuffer + 14, _previewHeight);
+      payloadSize = preview::METADATA_SIZE;
+    } else if (_request.previewOffset < _previewSize) {
+      const uint16_t size = std::min<uint16_t>(preview::CHUNK_SIZE, _previewSize - _request.previewOffset);
+      protocol::writeU16Le(_payloadBuffer + 8, _request.previewOffset);
+      protocol::writeU16Le(_payloadBuffer + 10, size);
+      memcpy(_payloadBuffer + preview::HEADER_SIZE, _previewPixels + _request.previewOffset, size);
+      payloadSize = preview::HEADER_SIZE + size;
+    } else ready = false;
   }
   xSemaphoreGive(_previewMutex);
-  return ready && preparePacket(protocol::MessageType::SnapshotChunk, _payloadBuffer, preview::HEADER_SIZE + preview::CHUNK_SIZE);
+  return ready && preparePacket(type, _payloadBuffer, payloadSize);
 }
 
-// Capture converts directly into a PSRAM thumbnail under a bounded mutex; SPI skips it while busy.
+// Copy a bounded sensor JPEG into PSRAM once. A null image reports capture failure
+// explicitly, so the master does not wait for its timeout or display a partial photo.
 bool SpiSlaveEndpoint::publishPreview(const stream::CaptureRequest& request, const uint8_t* image, size_t length, size_t width, size_t height) {
-  if (request.previewId == 0 || !_previewMutex || xSemaphoreTake(_previewMutex, pdMS_TO_TICKS(5)) != pdTRUE) return false;
-  const bool ready = preview::makeImage(image, length, width, height, _previewPixels);
-  if (ready) { _previewId = request.previewId; _previewControllerBootId = request.controllerBootId; }
+  if (request.previewId == 0 || length > preview::MAX_IMAGE_SIZE || !_previewMutex || xSemaphoreTake(_previewMutex, pdMS_TO_TICKS(5)) != pdTRUE) return false;
+  uint16_t jpegWidth = 0, jpegHeight = 0;
+  const bool valid = preview::jpegDimensions(image, length, &jpegWidth, &jpegHeight) && jpegWidth == width && jpegHeight == height;
+  _previewSize = valid ? static_cast<uint16_t>(length) : 0;
+  _previewWidth = valid ? jpegWidth : 0; _previewHeight = valid ? jpegHeight : 0;
+  if (valid) memcpy(_previewPixels, image, length);
+  _previewId = request.previewId; _previewControllerBootId = request.controllerBootId;
   xSemaphoreGive(_previewMutex);
-  return ready;
+  return true;
 }
 
 // Queue copies isolate capture on the Arduino loop task from SPI transmission on core 0.

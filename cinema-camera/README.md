@@ -9,20 +9,20 @@ validation of the wired SPI link between:
 
 ## RGB streaming
 
-Both cameras capture RGB565 QVGA images and send CRC-protected RGB24 perimeter
-samples to the WLED Cinema effect. WLED sends its current perimeter counts and
-configuration generation on every poll; no separate camera configuration is needed.
-Capture runs independently of SPI, with bounded latest-frame queues and a target
-of at most 30 frames per second. Raw RGB uses one sensor framebuffer, as recommended
-by the [Espressif driver](https://github.com/espressif/esp32-camera#important-to-remember).
-This avoids continuous multi-buffer capture; actual throughput depends on sensor
-exposure, single-buffer acquisition time and bus speed, and must be measured on hardware.
+Both cameras capture JPEG continuously with two PSRAM framebuffers, decode a
+160x120 image into 8-bit BGR for perimeter sampling, and send only RGB24 LED colors
+across SPI. Photos use native 640x480 JPEG on request. This keeps the preview sharp
+without paying the cost of decoding a VGA image for every LED update. WLED sends
+geometry, configuration generation and separate sensor controls for each camera.
+The target is at most 30 frames/second; actual capture/decode/SPI throughput must
+be measured. See the [Espressif JPEG guidance](https://github.com/espressif/esp32-camera#important-to-remember).
 
-**Flash WLED and both cameras together.** Protocol major version 3 adds calibrated
-corners and thumbnail requests. Versions 1 and 2 are incompatible. Persisted schema
-5 stores both quadrilaterals; schema 4 migrates with identity corners (full image),
-preserving the existing configuration. Older shared-MISO schemas still load disabled.
-The SPI wiring is unchanged.
+**Update WLED and both cameras together.** Protocol major version 4 adds sensor
+controls and bounded JPEG metadata/chunks; versions 1-3 are incompatible. Schema
+6 stores camera controls as well as perspective corners. Schema 5 migrates with
+neutral sensor controls and bounded automatic gain, preserving wiring/corners.
+Schema 4 additionally receives identity corners. Older shared-MISO schemas load
+disabled. No SPI wiring changes are required.
 
 Each camera must see all four corners of its own screen half. Use perspective
 calibration to mark those corners; the screen need not fill the sensor image and
@@ -56,7 +56,8 @@ Use another WLED effect first to test the LED strip itself.
 	black bars, overscan or a pattern that hides the actual screen boundary.
 3. Open `Config` → `Cinema` → `Camera perspective calibration`. Select `Left half`
 	and press `Load camera photo`. The snapshot takes a few seconds and is a color
-	128x96 thumbnail of the original sensor image, before any geometry correction.
+	640x480 JPEG of the original sensor image, before any geometry correction.
+	Acquisition briefly pauses that camera's LED updates; the other camera continues.
 4. Drag TL, TR, BR, BL onto the **left half's** top-left, top-right, bottom-right
 	and bottom-left screen corners. Its right-hand corners lie on the TV center line.
 	The labels refer to screen orientation, not the top/bottom of the sensor image.
@@ -77,16 +78,44 @@ Photos use the same settings PIN policy as Cinema settings. One camera photo is
 transferred at a time, in CRC-protected 1024-byte chunks with automatic retries.
 RGB responses receive at least every other camera poll during photo transfer;
 sensor frame rate and LED/network load still affect freshness. The camera holds
-its immutable thumbnail in PSRAM. WLED allocates one 24 KiB image only on request,
-copies small HTTP chunks, and releases it after 30 seconds. The browser retains
+its immutable JPEG in PSRAM. Images are limited to 48 KiB; the camera retries with
+stronger compression when needed. WLED allocates the declared image length after
+validated metadata, copies bounded HTTP chunks, and releases it after 60 seconds. The browser retains
 its downloaded photo locally; no photo is stored in flash or sent to an external service.
 A failed or expired capture shows an error and can be retried. A controller or
 camera reboot cannot combine parts of different snapshots.
 
+## Sensor color setup
+
+Select Left/Right in the calibration editor to adjust that camera independently.
+Controls take effect after Save; reload the JPEG to see the result. The image is
+sensor output: WLED's LED color boost/black threshold are not applied to the photo.
+
+1. Start with brightness/contrast/saturation at 0 and maximum automatic gain at 4x.
+2. Display white, then compare fixed Sunny/Cloudy/Office/Home white-balance presets.
+   A fixed preset prevents an automatic white balance from adapting to a solid red
+   or blue test screen. Choose the preset that keeps white neutral on your screen.
+3. Check red, green and blue separately. Adjust exposure first if bright colors
+   clip; increase saturation only after checking white balance and exposure.
+4. Check black in the actual installation. Covered-lens noise need not be perfect
+   digital black. Restrict gain/exposure as needed; use the LED black threshold
+   for residual low-level colors without discarding useful dark screen content.
+
+Auto exposure and gain may be disabled for manual values. Settings are range-checked
+by the page, WLED and camera firmware. They use the same OV2640 controls as
+[CameraWebServer](https://github.com/espressif/arduino-esp32/tree/master/libraries/ESP32/examples/Camera/CameraWebServer).
+The decoder handles RGB/BGR ordering explicitly; arbitrary image effects are not
+applied to the sampled colors.
+
+ESP32-CAM-MB users can connect one isolated camera by USB and let PlatformIO reset
+it automatically. The camera firmware has no Wi-Fi OTA; never connect its SPI bus
+or an independent supply while programming it from USB. An initial serial JPEG
+self-check reports the actual source dimensions and decoder time before SPI starts.
+
 ## Required hardware
 
 - ESP32 DOIT DevKit V1, 30-pin version;
-- two AI Thinker ESP32-CAM boards with OV2640 and 4 MB PSRAM;
+- two AI Thinker ESP32-CAM boards with OV2640 and at least 2 MB usable PSRAM;
 - one USB data cable for the DevKit;
 - one USB-to-UART adapter with 3.3 V logic levels for camera programming;
 - a stable 5 V supply sized for both cameras and the intended load;
@@ -431,7 +460,7 @@ that either camera is responding; check both camera connection states as well.
 | Only one camera disconnected | Check that camera's CS wire and power, then confirm its left/right firmware role |
 | Connections swap or one role is rejected | Confirm CS Left reaches the board flashed as `camera_left` and CS Right reaches `camera_right` |
 | Links connect only at low speed | Improve ground returns and cable topology, shorten stubs, and adjust series damping before raising the clock |
-| Cinema effect is black with both links connected | Check increasing frame counters, nonzero configuration generation/counts, exact segment length, effect selection, and that all three devices run protocol v3 |
+| Cinema effect is black with both links connected | Check increasing frame counters, nonzero configuration generation/counts, exact segment length, effect selection, and that all three devices run protocol v4 |
 | Frames increase but colors follow the wrong screen edge | Verify camera roles, semantic calibration corner labels, strip zero corner and direction |
 | Photo busy/unavailable or capture times out | Enable and save Cinema first, check the camera link/settings PIN, and retry after the previous capture completes; a memory allocation failure can also prevent starting a photo |
 | Occasional black portions despite connected links | Check frame counters and SPI errors, sensor exposure/frame rate, power stability, and bus frequency; reduce LED/network workload on WLED |
@@ -469,7 +498,7 @@ images, command history, and full-duplex exchanges between the real SPI slave an
 controller code. They also exercise lost commands, stale queued frames, controller
 and camera reboots, and configuration changes. Calibration checks verify an
 analytic projective mapping, mirrored/rotated corner ordering, degenerate region
-rejection, exact configuration persistence, thumbnail chunk retries and expiry.
+rejection, exact configuration persistence, JPEG metadata, short final chunks, retries and expiry.
 
 The hardware acceptance checklist above remains required for electrical timing,
 camera initialization, and reset/reconnect behavior.
