@@ -1,0 +1,19 @@
+; Copy this environment into the root's ignored platformio_override.ini.
+; Keep the repository's main platformio.ini unchanged.
+[env:ledwall_esp32dev]
+extends = env:esp32dev
+custom_usermods = ledwall
+
+; Diagnostic master: USB logs at 115200, Arduino driver errors and per-receiver counters.
+[env:ledwall_esp32dev_debug]
+extends = env:ledwall_esp32dev
+build_unflags = ${env:esp32dev.build_unflags}
+  -D CORE_DEBUG_LEVEL=0
+build_flags = ${env:esp32dev.build_flags}
+  -D WLED_DEBUG
+  -D CORE_DEBUG_LEVEL=1
+monitor_speed = 115200
+upload_speed = 57600
+monitor_filters = esp32_exception_decoder
+monitor_dtr = 0
+monitor_rts = 0

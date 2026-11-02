@@ -1,0 +1,4 @@
+{
+  "name": "ledwall",
+  "build": { "libArchive": false }
+}

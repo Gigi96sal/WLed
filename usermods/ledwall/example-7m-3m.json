@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "enabled": false,
+  "canvas": { "width": 700, "height": 300 },
+  "fps": 30,
+  "brightness": 128,
+  "effect": { "name": "rainbow", "speed": 0.1, "wavelength": 200, "direction": 0, "centerX": 350, "centerY": 150, "seed": 1 },
+  "controllers": [
+    { "id": 1, "ip": "192.168.1.51", "leds": 300 },
+    { "id": 2, "ip": "192.168.1.52", "leds": 300 }
+  ],
+  "strips": [
+    { "id": 1, "controller": 1, "start": 0, "count": 210, "x1": 1.666667, "y1": 1.666667, "x2": 698.333333, "y2": 1.666667, "reverse": false },
+    { "id": 2, "controller": 1, "start": 210, "count": 90, "x1": 698.333333, "y1": 1.666667, "x2": 698.333333, "y2": 298.333333, "reverse": false },
+    { "id": 3, "controller": 2, "start": 0, "count": 210, "x1": 1.666667, "y1": 298.333333, "x2": 698.333333, "y2": 298.333333, "reverse": true },
+    { "id": 4, "controller": 2, "start": 210, "count": 90, "x1": 1.666667, "y1": 1.666667, "x2": 1.666667, "y2": 298.333333, "reverse": true }
+  ]
+}
